@@ -1,5 +1,13 @@
 # Working conventions
 
+## Commit messages
+
+Write commit messages as an imperative summary with the Linear issue identifier at the end, in parentheses, no hash:
+
+```
+Add README with setup instructions (EDM-185)
+```
+
 ## Branches and worktrees
 
 When given a PR or issue to work on, find the associated branch and check it out in the current worktree before doing anything else. If the checkout fails for any reason, stop and tell the user before proceeding. Never edit files in another worktree via absolute paths.
