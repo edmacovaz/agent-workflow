@@ -1,0 +1,10 @@
+{
+  "env": {
+    "PATH": "/Users/edmacovaz/.nvm/versions/node/v24.2.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  },
+  "enabledPlugins": {
+    "linear@claude-plugins-official": true,
+    "Notion@claude-plugins-official": true,
+    "github@claude-plugins-official": true
+  }
+}
