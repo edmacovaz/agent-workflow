@@ -1,7 +1,6 @@
 ---
 name: open-pr
 description: Commit remaining changes, push, open a PR, and update the Linear issue status. Use when work on an issue is ready for review.
-disable-model-invocation: true
 ---
 
 Open a PR for the current branch.
