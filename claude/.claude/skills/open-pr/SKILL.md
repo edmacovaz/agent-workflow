@@ -29,7 +29,7 @@ Before opening the PR, review the full diff (`git diff origin/master..HEAD`) and
 
 **Code quality** — anything left rough, commented out, or that could be cleaner before a reviewer sees it.
 
-**Instructions** — does anything in the work reveal that AGENTS.md or `~/.claude/CLAUDE.md` is out of date, missing, or wrong? If so, update them now and include those changes in the commit.
+**Instructions** — read AGENTS.md in full. For each section, check whether the diff invalidates anything: Stack (new tools, removed tools), Development commands (package manager, script names), Workflow, Key Decisions. Do the same spot-check for `~/.claude/CLAUDE.md` (tooling conventions, CLI paths, worktree setup). If anything is stale, update it and include the changes in this commit.
 
 **Skills** — did this work surface a pattern, workflow step, or hard-won lesson that would be worth encoding as a user-level skill (`~/.claude/skills/`) or project skill (`.claude/skills/`)? If so, create or update the skill now.
 
