@@ -7,8 +7,18 @@ Personal dotfiles managed with [GNU Stow](https://www.gnu.org/software/stow/).
 | Package | Tracks |
 |---------|--------|
 | `claude` | `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, `~/.claude/skills/` |
+| `git`    | `~/.gitconfig`, `~/.config/git/ignore` |
+| `zsh`    | `~/.zshenv`, `~/.zprofile`, `~/.zshrc` |
+| `zed`    | `~/.config/zed/keymap.json`, `~/.config/zed/settings.json` |
 
 Everything else in `~/.claude/` (sessions, memory, history, cache) is unmanaged.
+Secrets are deliberately **not** tracked — notably `~/.config/gh/` (GitHub OAuth tokens).
+
+The `git` package's `~/.config/git/ignore` carries `**/.claude/settings.local.json`,
+which keeps machine-local Claude Code permission files out of every repo.
+
+> **Note:** these configs hard-code Apple Silicon paths (`/opt/homebrew`) and the
+> Tailscale.app bundle, so they assume a macOS / Apple Silicon machine.
 
 ## Setup on a new machine
 
@@ -23,10 +33,10 @@ brew install stow
 ```bash
 git clone git@github.com:edmacovaz/dotfiles.git ~/dotfiles
 cd ~/dotfiles
-stow claude
+stow claude git zsh zed
 ```
 
-This creates symlinks in `~` pointing into `~/dotfiles/claude/`.
+This creates symlinks in `~` pointing into the matching `~/dotfiles/<package>/` directories.
 
 ## Adding new packages
 
