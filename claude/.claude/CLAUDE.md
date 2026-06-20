@@ -10,7 +10,7 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 - **start-work** — pick up an issue: create its worktree, branch, and orient to the code.
 - **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet.
 - **code** — no skill of its own; the agreed plan + the project's AGENTS.md (principles, code style) + the built-in `/verify` and `/run` carry it.
-- **review** — review the diff before shipping (built-in `/code-review`, `/simplify`).
+- **review** — review the diff before shipping (the `review-changes` skill): judge it against the issue's intent, audit AGENTS.md conformance, and wrap the built-in `/code-review` / `/simplify`. Non-side-effecting, so run it in multiple passes.
 - **open-pr** — commit, push, open the PR, set the issue to In Review.
 - **merge-deploy-check** — merge, deploy, and confirm it works in production (closes the Definition of done).
 
