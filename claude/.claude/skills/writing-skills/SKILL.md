@@ -29,7 +29,7 @@ Cut any sentence whose removal wouldn't confuse a competent reader, and budget w
 
 Honour the working conventions in `~/.claude/CLAUDE.md` — chiefly the how/what boundary (skills are the project-agnostic *how*; a skill **points into AGENTS.md** for stack, test, and scope specifics rather than embedding them) and the Linear issue as spec container (no in-repo `spec.md` / `plan.md` / `tasks.md`). Skill-authoring specifics on top of that:
 
-- **Pre-fill live facts.** Open a skill that acts on live git/issue state with a `## Current state` section that inlines shell output via `` !`...` `` (e.g. `` !`git status --short` ``) — Claude Code runs the command and pastes the result into the skill before reading it, so it starts already oriented instead of spending a step finding its bearings.
+- **Pre-fill live facts.** Open a skill that acts on live git/issue state with a `## Current state` section that inlines the relevant shell output, so it starts already oriented instead of spending a step finding its bearings. See `references/best-practices.md` for the inline-command syntax, a worked example, and the load-time execution trap that comes with it.
 - Skills live at `claude/.claude/skills/<name>/SKILL.md`, ship via stow, and take a gerund, verb-first name.
 
 ## Reference

@@ -33,6 +33,12 @@ Anthropic says write clearly; the community insight is to pick *structure* by th
 - **Exclusion clause.** Selection is push-out (what the skill is *not* for) competing with pull-in (triggers). When a skill has a close neighbour, naming the exclusion is often the highest-value line in the description.
 - **"Known gotchas", maintained.** A gotchas list is among the most valuable content of a mature skill — but prune it; a stale entry sends Claude chasing a problem that no longer exists.
 
+## Pre-fill live facts — and the load-time execution trap
+
+A skill that acts on live git or issue state can pre-fill a `## Current state` section so it loads already oriented: write a shell command wrapped in backticks with an exclamation mark immediately before the opening backtick, and on load Claude Code runs it and pastes the output in place.
+
+**Never write that span out in a skill or reference, even as an example** — the loader runs every one it sees (fenced or not), so a literal example executes itself on load and breaks the skill. Describe the syntax in prose, as here.
+
 ## Caveat: discipline skills vs. process skills
 
 superpowers is tuned for *discipline-enforcing* skills (TDD, verification) — hence its absolutism about failing-test gates and rationalization tables. This collection's skills are mostly *process/workflow* skills, so the high-value transfers are the **"when only" description discipline**, **exclusion clauses**, **match-form-to-failure**, **word-budgeting**, and the **gotchas habit** — not the full rationalization-table machinery. Reach for that apparatus only when you're actually writing a discipline skill.
