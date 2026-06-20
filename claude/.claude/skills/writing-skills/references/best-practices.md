@@ -39,6 +39,8 @@ A skill that acts on live git or issue state can pre-fill a `## Current state` s
 
 **Never write that span out in a skill or reference, even as an example** — the loader runs every one it sees (fenced or not), so a literal example executes itself on load and breaks the skill. Describe the syntax in prose, as here.
 
+**Keep pre-fills to simple commands — the load-time sandbox blocks command substitution.** A span containing `$(…)` (or similar) is rejected, and the whole skill fails to load. So `` !`git diff $(git merge-base origin/HEAD HEAD)` `` doesn't just misbehave — it stops the skill loading at all. Pre-fills are for cheap orientation facts (branch, `git status`, a plain ref); push anything that needs substitution — or any bulky output like a full diff — into a *step*, where the agent runs it via the Bash tool and substitution is allowed.
+
 ## Caveat: discipline skills vs. process skills
 
 superpowers is tuned for *discipline-enforcing* skills (TDD, verification) — hence its absolutism about failing-test gates and rationalization tables. This collection's skills are mostly *process/workflow* skills, so the high-value transfers are the **"when only" description discipline**, **exclusion clauses**, **match-form-to-failure**, **word-budgeting**, and the **gotchas habit** — not the full rationalization-table machinery. Reach for that apparatus only when you're actually writing a discipline skill.

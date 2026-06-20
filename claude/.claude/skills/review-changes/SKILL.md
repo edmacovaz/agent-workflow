@@ -8,7 +8,7 @@ Review the work on the current branch before it ships. This skill only reads and
 ## Current state
 - Branch: !`git branch --show-current`
 - Status: !`git status --short`
-- Diff under review (committed + uncommitted, vs the branch point): !`git diff $(git merge-base origin/HEAD HEAD)`
+- Branch point: !`git merge-base origin/HEAD HEAD`
 
 ## Steps
 
@@ -16,7 +16,7 @@ Review the work on the current branch before it ships. This skill only reads and
 Derive the issue identifier from the branch name — the suffix after the last `-` (e.g. `buttons-and-links-edm-179` → `EDM-179`). Fetch the issue from Linear and read its description, `## Plan`, and comments. This is the spec you review the diff against.
 
 ### 2. Fresh-context review against intent
-Read the diff cold and adversarially, as a reviewer who didn't write it. Judge the finished implementation, not the plan:
+Pull the full diff under review — `git diff $(git merge-base origin/HEAD HEAD)`, which covers committed *and* uncommitted changes vs the branch point (run `--stat` first for a file overview). Then read it cold and adversarially, as a reviewer who didn't write it. Judge the finished implementation, not the plan:
 - **Completeness** — is anything the issue/plan asked for missing or only half-done?
 - **Correctness against intent** — does the code actually do what the issue asked, or something subtly different?
 - **Scope** — anything in the diff the issue didn't ask for, that should be split out or removed?
