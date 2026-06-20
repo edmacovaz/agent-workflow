@@ -1,5 +1,29 @@
 # Working conventions
 
+## Spec-driven workflow
+
+Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
+
+**roadmap → start-work → plan → (code) → review → open-pr → merge-deploy-check**
+
+- **roadmap** — review and groom the backlog; shape and prioritise issues (builds on `write-issue`).
+- **start-work** — pick up an issue: create its worktree, branch, and orient to the code.
+- **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet.
+- **code** — no skill of its own; the agreed plan + the project's AGENTS.md (principles, code style) + the built-in `/verify` and `/run` carry it.
+- **review** — review the diff before shipping (built-in `/code-review`, `/simplify`).
+- **open-pr** — commit, push, open the PR, set the issue to In Review.
+- **merge-deploy-check** — merge, deploy, and confirm it works in production (closes the Definition of done).
+
+### How vs what
+- **Skills are the project-agnostic *how*** (process) and live here, user-global, alongside these conventions.
+- **Project docs (AGENTS.md / CLAUDE.md) are the project-specific *what/context*** — stack, test strategy, architecture, scope.
+- A skill **points into AGENTS.md** for specifics rather than embedding them. If a skill names a stack, test command, or scope rule, that belongs in AGENTS.md instead.
+
+### The spec lives on the issue
+- The **Linear issue is the spec container.** The spec (specify) and the plan live on the issue and are read via the Linear MCP — not in repo markdown.
+- **No in-repo `spec.md` / `plan.md` / `tasks.md`.** Don't create them.
+- A throwaway `SPEC.md` is reserved for genuinely large, multi-session features only — delete it once the work lands.
+
 ## Definition of done
 
 - "Done" means working in production — not written, reviewed, or merged. The path there (migrations, config/secrets, infra, deploy, clients already live) is part of the work by default.
