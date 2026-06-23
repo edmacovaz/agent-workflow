@@ -34,7 +34,7 @@ Each issue gets its own git worktree under `.claude/worktrees/<gitBranchName>` â
 - If the worktree can't be created or the branch can't be checked out, stop and tell the user before proceeding.
 
 ### 4. Prepare the worktree
-A fresh worktree doesn't share `node_modules` or other build artefacts with the main checkout. Run whatever install/setup step the project's AGENTS.md specifies before tooling will work (e.g. `pnpm install`). Skip if the project needs none.
+A fresh worktree doesn't share `node_modules` or other build artefacts with the main checkout. Run whatever install **and env/secrets** setup steps the project's AGENTS.md specifies before tooling will work (e.g. `pnpm install`; a secrets-manager `setup`/login so secret-backed commands resolve). Skip if the project needs none.
 
 ### 5. Get your bearings
 Take a quick lay of the land so the worktree is oriented, not deeply analysed: read AGENTS.md / README, and locate the area the issue touches. Leave the real read-before-forming-a-view research to `/plan` â€” don't start designing here.
