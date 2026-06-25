@@ -5,5 +5,19 @@
   },
   "model": "opus",
   "effortLevel": "high",
-  "theme": "dark"
+  "theme": "dark",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/worktree-anchor-guard.sh",
+            "statusMessage": "Checking worktree anchor"
+          }
+        ]
+      }
+    ]
+  }
 }
