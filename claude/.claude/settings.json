@@ -6,6 +6,25 @@
   "model": "opus",
   "effortLevel": "high",
   "theme": "dark",
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Linear__get_issue",
+      "mcp__claude_ai_Linear__list_comments",
+      "mcp__claude_ai_Linear__list_projects",
+      "mcp__context7__query-docs",
+      "mcp__XcodeBuildMCP__screenshot",
+      "mcp__XcodeBuildMCP__snapshot_ui",
+      "Bash(git add *)",
+      "Bash(git fetch *)",
+      "mcp__claude_ai_Linear__save_issue",
+      "mcp__claude_ai_Linear__save_milestone",
+      "mcp__claude_ai_Linear__save_project",
+      "Bash(npx tsc *)",
+      "Bash(npx jest *)",
+      "Bash(npm ci)",
+      "mcp__posthog__exec"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
