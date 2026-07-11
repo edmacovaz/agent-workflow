@@ -7,16 +7,20 @@
 // custom settings, run `zed: open default settings` from the
 // command palette (cmd-shift-p / ctrl-shift-p)
 {
+  "proxy": "",
   "soft_wrap": "editor_width",
   "agent_servers": {
-    "opencode": {
-      "type": "registry"
-    },
     "claude-acp": {
       "default_config_options": {
-        "mode": "acceptEdits"
+        "model": "claude-opus-4-8[1m]"
       },
       "type": "registry"
+    },
+    "opencode": {
+      "type": "registry",
+      "default_config_options": {
+        "model": "opencode/glm-5.2"
+      }
     }
   },
   "ui_font_size": 16,
