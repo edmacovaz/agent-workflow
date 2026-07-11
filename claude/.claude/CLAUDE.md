@@ -53,6 +53,17 @@ Each issue/PR gets its **own git worktree** under `.claude/worktrees/<branch-nam
 
 Note: a worktree created this way won't appear in Zed's "Open Worktrees" picker (Zed only lists ones created through its own UI). To see it in Zed, use "Add Folders to Project". Mention this when creating one so the user isn't surprised it's missing from the picker.
 
+# Infrastructure (cross-project)
+
+- **Function-shaped web apps** (static/SSR, no persistent process) → **Vercel**
+- **Server-shaped backends** (persistent process, global state, queue workers) → **Fly.io** (decision record: STE-238)
+- **Agents and background jobs** → **Trigger.dev**; use its platform features (queue concurrency limits, failure alerts, scheduled sweepers, durable waits) over hand-rolled equivalents
+- **Secrets** → **Doppler** as single source of truth, one-way fan-out to runtimes
+- **Postgres** → **Neon**; branches for migration rehearsal and backfill staging
+- **Agent observability** → **Langfuse** (traces, evals) + **PostHog** (errors, analytics)
+
+If the code you're working on doesn't match: check what it actually runs rather than assuming, and plan work to move toward these targets. If a plan would build further on a platform not listed here, flag the mismatch and get confirmation first.
+
 # User environment
 
 ## CLI tools
