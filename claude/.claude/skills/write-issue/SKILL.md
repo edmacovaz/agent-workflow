@@ -20,3 +20,10 @@ Write a Linear issue someone can pick up without you in the room. Describe the p
 - Write the implementation, a spec, or a design — that's the picker-upper's call.
 - Bury a migration, breaking change, or rollout need as an afterthought.
 - Pad with restated context or hypothetical future scope.
+
+## Exploration issues
+An exploration deliberately questions a settled decision or direction to see if a viable alternative exists. It is not a contradiction of the plan — if it finds something strong enough, the plan changes; that's its purpose.
+- Prefix the title with `Exploration:`.
+- Open with a blockquote naming the decision or direction it challenges (link the record it questions, e.g. the issue where the decision was made) and stating that findings may change the plan.
+- Body stays an exploration: goal, what to explore, outcomes to report back. Note the switching cost a finding must outweigh if there is a dominant one; no trigger/gate machinery beyond that.
+- Groom explorations by refreshing stale premises inside them — never cancel one as "stale because it contradicts the plan" (examples: STE-1, STE-3).
