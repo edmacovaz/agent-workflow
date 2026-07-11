@@ -1,12 +1,15 @@
 ---
 name: start-work
-description: Set up to work on a Linear issue before any planning or coding — sync git and create its worktree. Use when picking up or resuming an issue; stops at a clean worktree, ready for /plan. Not for planning or writing code — that's /plan.
+description: The gate between planning and coding a Linear issue — cut its branch off latest main and set up the worktree. Use after /plan, from inside the worktree you created in Zed, when you're ready to start changes. Not for planning — that's /plan.
 disable-model-invocation: true
 ---
 
-Set up to work on Linear issue: $ARGUMENTS
+Start work on Linear issue: $ARGUMENTS
+
+Run this **inside the worktree you created in Zed's picker**, after `/plan` has agreed a plan on the issue. This skill is the gate between planning and coding: `/plan` ran read-only against the latest `main`; `start-work` now cuts the issue's branch and prepares the worktree, then hands off to coding. It does **not** create worktrees — you make those in Zed.
 
 ## Current state
+- Toplevel: !`git rev-parse --show-toplevel`
 - Branch: !`git branch --show-current`
 - Worktrees: !`git worktree list`
 - Status: !`git status --short`
@@ -14,35 +17,31 @@ Set up to work on Linear issue: $ARGUMENTS
 ## Steps
 
 ### 1. Fetch the issue
-Use the Linear MCP tool to fetch the issue by ID (e.g. EDM-179). Extract:
-- Title, description, and any linked documents or attachments
-- `gitBranchName` (format: `{title-slug}-{identifier}`)
-- Current status
+Use the Linear MCP to fetch the issue by ID (from $ARGUMENTS, or infer from the context). Extract the title, description, `gitBranchName` (Linear's canonical branch name — the branch you cut must match it exactly for PR auto-linking), and current status.
 
-### 2. Assess context fit
-Before touching git, determine whether this issue belongs to the current repo.
+### 2. Confirm you're in a dedicated worktree, not the main checkout
+This skill cuts a branch, so it must run in the Zed worktree for this issue — never the primary checkout. In `git worktree list`, the first entry is the primary checkout; if the current toplevel is that one (or you're sitting on the default branch with no dedicated worktree), **stop** and tell the user to create a worktree in Zed's picker and open it, then re-run. Don't cut the branch in the main checkout.
 
-Use the issue description and the current repo's remote URL (`git remote get-url origin`) to judge. An issue belongs here if the work primarily involves files in this repository. It doesn't belong here if the work is in a different repo, or involves no repo at all (system setup, shell config, machine-level tasks).
+Quick fit check while here: does the issue's work primarily involve this repo (compare it to `git remote get-url origin`)? If it belongs elsewhere, or you're unsure, stop and ask — don't touch git.
 
-If it doesn't belong, or you're unsure, stop and tell the user — explain what you found and ask how they'd like to proceed. Do not create worktrees, rename branches, or touch git.
+### 3. Cut the issue's branch off latest main
+`/plan` looked at the latest `main`; now cut the branch from an up-to-date base, named exactly Linear's `gitBranchName`:
 
-### 3. Find or create the worktree
-Each issue gets its own git worktree under `.claude/worktrees/<gitBranchName>` — the worktree-per-issue convention in `~/.claude/CLAUDE.md` (and AGENTS.md where present). Do **not** do a plain branch checkout in the current worktree.
+```
+git fetch origin
+git switch -c <gitBranchName> origin/<default-branch>
+```
 
-- Check `git worktree list` for an existing worktree for this issue. If one exists, switch into it (`EnterWorktree` with its `path`) and skip creation — that's where the work lives.
-- Otherwise create one with the `EnterWorktree` tool (`name: <gitBranchName>`). It branches off the latest `origin/<default-branch>` and switches the session into the new worktree. The tool prefixes the branch with `worktree-`, so immediately `git branch -m <gitBranchName>` to match Linear's `gitBranchName` (needed for PR auto-linking).
-- If the worktree can't be created or the branch can't be checked out, stop and tell the user before proceeding.
+Zed's generated worktree *name* stays as-is — only the branch follows Linear's naming. If the branch already exists (you're resuming), switch to it instead (`git switch <gitBranchName>`). If uncommitted changes block the switch, stop and ask rather than forcing it.
 
 ### 4. Prepare the worktree
-A fresh worktree doesn't share `node_modules` or other build artefacts with the main checkout. Run whatever install **and env/secrets** setup steps the project's AGENTS.md specifies before tooling will work (e.g. `pnpm install`; a secrets-manager `setup`/login so secret-backed commands resolve). Skip if the project needs none.
+A fresh worktree shares no `node_modules` or secrets setup with the main checkout. Run the install **and env/secrets** steps the project's AGENTS.md specifies (e.g. `npm install` / `pnpm install`, then a secrets-manager `setup`/login so secret-backed commands resolve). Skip only if the project needs none.
 
 ### 5. Get your bearings
-Take a quick lay of the land so the worktree is oriented, not deeply analysed: read AGENTS.md / README, and locate the area the issue touches. Leave the real read-before-forming-a-view research to `/plan` — don't start designing here.
+A quick lay of the land, not deep analysis: skim AGENTS.md / README and locate the area the issue touches. The real read-before-forming-a-view research already happened in `/plan` — don't re-do it here.
 
 ### 6. Mark the issue In Progress
-Now that setup has succeeded, move the Linear issue to "In Progress" (the started state) via the Linear MCP — work has begun. Skip if it's already there. Do this only after step 2 confirmed the issue belongs here; never flip the status of an issue you've bounced back to the user.
+Move the Linear issue to its started state via the Linear MCP (skip if already there). Only after step 2 confirmed the issue belongs here — never flip the status of an issue you've bounced back to the user.
 
 ### 7. Hand off
-The new worktree won't appear in Zed's "Open Worktrees" picker (Zed only lists ones created through its own UI). Tell the user to add it via **Add Folders to Project** if they want it open there — this is the part that can't be automated mid-flow.
-
-Then stop. Setup is done. Point the user to run `/plan` to turn the issue into an agreed plan. Do not plan or write code in this skill.
+The branch is live and the worktree is set up. Start implementing per the plan recorded on the issue. (No Zed "Add Folders" step — you created the worktree in Zed, so it's already open there.)

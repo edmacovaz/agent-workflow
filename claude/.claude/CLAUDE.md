@@ -4,11 +4,11 @@
 
 Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 
-**roadmap → start-work → plan → (code) → review → open-pr → merge-deploy-check**
+**roadmap → plan → start-work → (code) → review → open-pr → merge-deploy-check**
 
 - **roadmap** — review and groom the backlog; shape and prioritise issues (builds on `write-issue`).
-- **start-work** — pick up an issue: create its worktree, branch, and orient to the code.
-- **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet.
+- **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet. Runs inside the worktree you created in Zed, against the latest `main` — no branch, no changes.
+- **start-work** — the gate between planning and coding: cut the issue's branch (Linear naming) off latest `main`, set up the worktree (deps + secrets), orient, mark In Progress. Runs in the same Zed worktree the plan ran in.
 - **code** — no skill of its own; the agreed plan + the project's AGENTS.md (principles, code style) + the built-in `/verify` and `/run` carry it.
 - **review** — review the diff before shipping (the `review-changes` skill): judge it against the issue's intent, audit AGENTS.md conformance, and wrap the built-in `/code-review` / `/simplify`. Non-side-effecting, so run it in multiple passes.
 - **open-pr** — commit, push, open the PR, set the issue to In Review.
@@ -44,14 +44,19 @@ Add README with setup instructions (EDM-185)
 
 ## Branches and worktrees
 
-Each issue/PR gets its **own git worktree** under `.claude/worktrees/<branch-name>` (nested inside the main checkout — this is the `EnterWorktree` tool's default location, and the preferred one), not just a branch in the current worktree. Do not use the older sibling `../sted-worktrees/` path for new worktrees. When given a PR or issue to work on:
+Each issue/PR gets its **own git worktree**, and **you (the user) create it in Zed's picker** — not the agent. Zed generates the worktree's name and location; that's fine, leave it. The agent never creates worktrees (no `EnterWorktree`-into-`.claude`), and there's no "Add Folders to Project" step — you already opened it in Zed.
 
-- Look for an existing worktree for it first (`git worktree list`). If one exists, use it — cd in and do all work there. Editing that worktree's files by absolute path is expected; that's where the work lives.
-- If none exists, create one with the `EnterWorktree` tool (`name: <branch-name>`). It branches off the latest `origin/main` and switches the session into the new worktree under `.claude/worktrees/`. The tool prefixes the branch with `worktree-`, so immediately `git branch -m <branch-name>` to match Linear's `gitBranchName` (needed for PR auto-linking). New worktrees need `npm install` / `pnpm install` before tooling works — `node_modules` isn't shared between worktrees.
-- If the branch can't be checked out or the worktree can't be created, stop and tell the user before proceeding.
+The flow, all inside that one Zed worktree:
+
+- **Create + open** the worktree in Zed, off the latest `main`. Run the Claude session there.
+- **`/plan`** runs against latest `main` — read-only, no branch, no changes.
+- **`/start-work`** is the gate that cuts the branch: it fetches, creates the issue's branch (named exactly Linear's `gitBranchName`, for PR auto-linking) off latest `origin/main`, then runs the project's install + secrets setup (`node_modules` isn't shared between worktrees). Coding starts after this.
+
+Guardrails:
+- The agent works only in the worktree the session is anchored to; a global hook blocks edits to a *different* worktree of the same repo (see the worktree-anchoring memory). Anchor absolute Read/Edit paths to the worktree root.
+- If a session isn't in the intended worktree, switch into an existing one with `EnterWorktree` (`path: …`); still don't *create* one.
+- `/start-work` must not cut a branch in the **main checkout** — if it detects the primary worktree, it stops and asks you to create/open a Zed worktree.
 - Don't touch an *unrelated* worktree (one that isn't for the issue at hand).
-
-Note: a worktree created this way won't appear in Zed's "Open Worktrees" picker (Zed only lists ones created through its own UI). To see it in Zed, use "Add Folders to Project". Mention this when creating one so the user isn't surprised it's missing from the picker.
 
 # Infrastructure (cross-project)
 
