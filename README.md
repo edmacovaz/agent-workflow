@@ -14,6 +14,12 @@ Personal dotfiles managed with [GNU Stow](https://www.gnu.org/software/stow/).
 Everything else in `~/.claude/` (sessions, memory, history, cache) is unmanaged.
 Secrets are deliberately **not** tracked — notably `~/.config/gh/` (GitHub OAuth tokens).
 
+`sandbox-guest/` is **not** a stow package — it's source-only, copied into the sandbox VM by
+the `sandbox` skill's `rebuild.sh`. `agent/` (orientation `CLAUDE.md` + VM-native skills) lands
+in the VM's `~/.claude/`; `git-hooks/` (a pre-push backstop that blocks `main`) lands in
+`~/.git-hooks/`. It never symlinks into the host `~`, so the host and VM agents keep separate
+instruction sets. Tokens are injected at rebuild time from Doppler (`sted/dev`), never committed here.
+
 The `git` package's `~/.config/git/ignore` carries `**/.claude/settings.local.json`,
 which keeps machine-local Claude Code permission files out of every repo.
 

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Sandbox VM backstop: refuse pushes to the default branch.
+# The VM opens PRs; it never pushes main/master. This guards against an agent
+# mistake — it is bypassable with --no-verify, so it stops honest slips, not
+# deliberate overrides (which is all we want under the "protect from mistakes" model).
+while read -r _local _localsha remoteref _remotesha; do
+  case "$remoteref" in
+    refs/heads/main|refs/heads/master)
+      echo "pre-push: refusing to push to $remoteref from the sandbox VM — open a PR instead." >&2
+      exit 1
+      ;;
+  esac
+done
+exit 0

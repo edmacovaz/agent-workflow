@@ -76,7 +76,12 @@ If the code you're working on doesn't match: check what it actually runs rather 
 - `gh` (GitHub CLI) is at `/opt/homebrew/bin/gh` — use this full path, it is not on the default PATH in Claude Code sessions.
 - `node` / `npm` / `pnpm` / `npx` are managed by fnm, initialised via `~/.zshenv`. They should be on PATH in all subshells without any manual prefix.
 - `tailscale` CLI ships inside the macOS app bundle at `/Applications/Tailscale.app/Contents/MacOS/Tailscale` — use this full path, it is not on PATH. (The user has an interactive-shell alias in `~/.zshrc`, but that isn't visible to non-interactive tool shells.)
+- `limactl` (Lima) is at `/opt/homebrew/bin/limactl` — not on the default PATH.
 - For `.claude/launch.json` (used by `preview_start`), processes are spawned directly without shell init. Use `/bin/sh` with an explicit `cd` to the project root (required for worktrees — getcwd fails otherwise) and `. ~/.zshenv` to load fnm: `{ "runtimeExecutable": "/bin/sh", "runtimeArgs": ["-c", "cd /absolute/path/to/project && . ~/.zshenv && pnpm dev"] }`. The `launch.json` is gitignored so the hardcoded path is fine.
 - New git worktrees need `pnpm install` run before the dev server will work — `node_modules` is not shared between worktrees.
 
 If a CLI tool isn't found on PATH, check `/opt/homebrew/bin/` before searching elsewhere. If found, use the full path and add it to this file for future sessions.
+
+## Sandbox VM
+
+A Lima `vz` VM (`sandbox`) runs Claude Code with permissions bypassed, filesystem-isolated from the host, driven from Zed over SSH (`lima-sandbox`). Setup, rebuild, connect, and adding MCP: use the `sandbox` skill. Zed's remote + bypass config persists in dotfiles (`zed/.config/zed/settings.json`).
