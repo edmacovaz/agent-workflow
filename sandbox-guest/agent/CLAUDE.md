@@ -8,9 +8,9 @@ You are running **inside the disposable `sandbox` VM** (Ubuntu aarch64), reached
 - **Permissions are bypassed by design; act autonomously.** Nothing here is precious — the VM is rebuilt from a script. Don't stop for routine file/command approval.
 - **This is not the host.** Homebrew, Zed, `tailscale`, Lima/`limactl`, and the host's upstream/downstream skills (`roadmap`, `plan`, `merge-deploy-check`, `sandbox`) do not exist here — never invoke or reference them.
 
-## Your job: start-work → open-pr
+## Your job: deliver
 
-You own the coding middle of the spec-driven lifecycle for an **already-planned** issue: **start-work → code → review → open-pr**. Planning/roadmap (upstream) and merge/deploy (downstream) belong to the host agent — never do them here. Use the VM skills: `start-work`, `review-changes`, `open-pr`.
+You own the coding middle of the spec-driven lifecycle for an **already-planned** issue: take the plan and **deliver** it — implement the gap, simplify, open a PR, then adversarially review it and post the review and fixes as PR comments. Planning/roadmap (upstream) and merge/deploy (downstream) belong to the host agent — never do them here. Use the VM skill: `deliver`.
 
 ## Access you have — scoped, but real
 

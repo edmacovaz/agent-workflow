@@ -44,8 +44,8 @@ if [ -n "$GIT_NAME" ] && [ -n "$GIT_EMAIL" ]; then
   limactl shell "$NAME" -- git config --global user.email "$GIT_EMAIL"
 fi
 
-# Provision the VM-specific agent profile: orientation CLAUDE.md + VM-native skills
-# (start-work / review-changes / open-pr). Source-only dir, never stowed to the host.
+# Provision the VM-specific agent profile: orientation CLAUDE.md + the VM-native
+# `deliver` skill. Source-only dir, never stowed to the host.
 GUEST_PROFILE="$HOME/dotfiles/sandbox-guest"
 if [ -d "$GUEST_PROFILE/agent" ]; then
   echo "Provisioning guest agent profile (CLAUDE.md + VM skills)..."
