@@ -7,11 +7,30 @@
 // custom settings, run `zed: open default settings` from the
 // command palette (cmd-shift-p / ctrl-shift-p)
 {
+  "ssh_connections": [
+    {
+      "host": "lima-sandbox",
+      "args": [],
+      "projects": [
+        {
+          "paths": [
+            "/home/edmacovaz.guest/work/edmacovaz"
+          ]
+        },
+        {
+          "paths": [
+            "/home/edmacovaz.guest/work/scratch"
+          ]
+        }
+      ]
+    }
+  ],
   "proxy": "",
   "soft_wrap": "editor_width",
   "agent_servers": {
     "claude-acp": {
       "default_config_options": {
+        "mode": "bypassPermissions",
         "model": "claude-opus-4-8[1m]"
       },
       "type": "registry"
