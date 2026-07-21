@@ -28,12 +28,16 @@ An isolated Lima `vz` VM (`sandbox`) for running Claude Code with `--dangerously
 
 - Pause / resume: `limactl stop sandbox` / `limactl start sandbox`.
 - **Rebuild from scratch** — `scripts/rebuild.sh`, then re-`/login` in Zed. Use after a `limactl delete` or on a new machine. **It destroys any existing `sandbox` instance**, so only run it to rebuild, never to reconnect.
-  - Host prerequisites: Lima installed (`brew install lima`) and the Doppler CLI authed (`doppler login`), with `GH_TOKEN` + `LINEAR_API_KEY` present in `sted/dev` (credentials are pulled from there, never committed). Without Doppler the VM builds but comes up uncredentialed.
+  - Host prerequisites: Lima installed (`brew install lima`) and the Doppler CLI authed (`doppler login`), with `GH_TOKEN` + `LINEAR_API_KEY` present in `sandbox/dev` — the VM's own Doppler project, deliberately not tied to any one repo (credentials are pulled from there, never committed). Without Doppler the VM builds but comes up uncredentialed.
   - The only manual step after it runs is `claude /login` in the VM (interactive Anthropic auth — unscriptable).
 
 ## Getting code in
 
-`git clone` inside the VM (no host mount). Use a dedicated, repo-scoped token or deploy key — never host git credentials.
+`git clone` inside the VM (no host mount) — `gh` is already authenticated at build time from `sandbox/dev`, so `gh repo clone <owner>/<repo>` works with no further setup.
+
+That token is a fine-grained PAT scoped to a **selected list of repos**, deliberately: the VM runs bypass-mode Claude, so its reach should be bounded to the repos you actually work on there. A repo that isn't on the list fails with a bare `404` that reads like "doesn't exist" — add it to the token (GitHub → Settings → Developer settings → fine-grained tokens → the sandbox token → Repository access) rather than broadening it to all repositories.
+
+Beyond the clone, a repo brings its **own** setup — deps, env, secrets — per its AGENTS.md. The VM only ships general tooling (git, `gh`, Node/corepack) and its own credentials; it deliberately knows nothing about any particular repo's stack. If a repo needs a secrets manager, installing and scoping it is that repo's setup step, run inside the VM like any other install.
 
 ## Adding MCP
 

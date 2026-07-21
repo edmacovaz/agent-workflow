@@ -18,7 +18,7 @@ Secrets are deliberately **not** tracked — notably `~/.config/gh/` (GitHub OAu
 the `sandbox` skill's `rebuild.sh`. `agent/` (orientation `CLAUDE.md` + VM-native skills) lands
 in the VM's `~/.claude/`; `git-hooks/` (a pre-push backstop that blocks `main`) lands in
 `~/.git-hooks/`. It never symlinks into the host `~`, so the host and VM agents keep separate
-instruction sets. Tokens are injected at rebuild time from Doppler (`sted/dev`), never committed here.
+instruction sets. Tokens are injected at rebuild time from Doppler (`sandbox/dev`), never committed here.
 
 The `git` package's `~/.config/git/ignore` carries `**/.claude/settings.local.json`,
 which keeps machine-local Claude Code permission files out of every repo.

@@ -66,27 +66,33 @@ limactl shell "$NAME" -- node -e '
 '
 
 # Install the pre-push backstop as a global git hook (refuses pushes to main/master).
-# Behavioural guard against an agent mistake — sted is a private free-plan repo, so
-# server-side branch protection isn't available.
+# Behavioural guard against an agent mistake — the VM clones arbitrary repos, and
+# server-side branch protection can't be relied on across all of them.
 if [ -d "$GUEST_PROFILE/git-hooks" ]; then
   echo "Installing pre-push backstop (blocks main/master)..."
   tar --no-xattrs -C "$GUEST_PROFILE/git-hooks" -cf - . \
     | limactl shell "$NAME" -- sh -c 'mkdir -p ~/.git-hooks && tar -C ~/.git-hooks -xf - && chmod +x ~/.git-hooks/* && git config --global core.hooksPath ~/.git-hooks'
 fi
 
-# Inject scoped credentials from Doppler (sted/dev). The host pulls with its own
-# Doppler auth; nothing Doppler-shaped ever enters the VM. Idempotent — safe to re-run.
+# Inject scoped credentials from Doppler (sandbox/dev — the VM's own project, not any
+# one repo's). The host resolves them with its own Doppler auth; only the values cross
+# into the VM, never the host's Doppler session. Idempotent — safe to re-run.
+#
+# This covers the VM's own job (open PRs, read Linear). A cloned repo's env/secrets are
+# that repo's setup step, per its AGENTS.md — not this script's business.
+DOPPLER_PROJECT_NAME=sandbox
+DOPPLER_CONFIG_NAME=dev
 if command -v doppler >/dev/null 2>&1; then
-  echo "Injecting credentials from Doppler (sted/dev)..."
-  GH_TOKEN="$(doppler secrets get GH_TOKEN -p sted -c dev --plain 2>/dev/null || true)"
-  LINEAR_API_KEY="$(doppler secrets get LINEAR_API_KEY -p sted -c dev --plain 2>/dev/null || true)"
+  echo "Injecting credentials from Doppler ($DOPPLER_PROJECT_NAME/$DOPPLER_CONFIG_NAME)..."
+  GH_TOKEN="$(doppler secrets get GH_TOKEN -p "$DOPPLER_PROJECT_NAME" -c "$DOPPLER_CONFIG_NAME" --plain 2>/dev/null || true)"
+  LINEAR_API_KEY="$(doppler secrets get LINEAR_API_KEY -p "$DOPPLER_PROJECT_NAME" -c "$DOPPLER_CONFIG_NAME" --plain 2>/dev/null || true)"
 
   if [ -n "$GH_TOKEN" ]; then
     printf '%s' "$GH_TOKEN" \
       | limactl shell "$NAME" -- sh -c 'gh auth login --with-token && gh auth setup-git' \
       && echo "  gh: authenticated"
   else
-    echo "  gh: GH_TOKEN not found in sted/dev — skipped"
+    echo "  gh: GH_TOKEN not found in $DOPPLER_PROJECT_NAME/$DOPPLER_CONFIG_NAME — skipped"
   fi
 
   if [ -n "$LINEAR_API_KEY" ]; then
@@ -95,7 +101,7 @@ if command -v doppler >/dev/null 2>&1; then
       https://mcp.linear.app/mcp --header "Authorization: Bearer $LINEAR_API_KEY" >/dev/null \
       && echo "  linear MCP: added (user scope)"
   else
-    echo "  linear MCP: LINEAR_API_KEY not found in sted/dev — skipped"
+    echo "  linear MCP: LINEAR_API_KEY not found in $DOPPLER_PROJECT_NAME/$DOPPLER_CONFIG_NAME — skipped"
   fi
   unset GH_TOKEN LINEAR_API_KEY
 else
