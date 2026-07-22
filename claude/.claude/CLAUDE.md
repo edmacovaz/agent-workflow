@@ -30,6 +30,10 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 - Scoping any of it out is a decision to state and get acknowledged — never an implicit omission.
 - "Works in dev" is not "works in production." Reason about the delta: data, schema state, secrets/config, infra, and the clients already running against it.
 
+## Dependencies and stack changes
+
+Never install, add, upgrade or remove dependencies, or edit `package.json`, lockfiles, or build config, on your own initiative. It needs an explicit ask or an already-agreed plan — never folded into some other goal ("just to check it renders"). If something is missing, say so and stop. When an install *is* agreed, use whichever manager the project's lockfile indicates, and never add a second lockfile.
+
 ## Keeping plans current
 
 When a plan, Linear issue, or other living document has gone out of date, ask to **correct the document itself** — rewrite the description/body so it matches the current reality. Don't default to bolting on a comment or appendix that leaves the stale plan in place. A comment records a discussion; the canonical description should always reflect the current plan. Suggest the rewrite, not the comment.
@@ -74,11 +78,10 @@ If the code you're working on doesn't match: check what it actually runs rather 
 ## CLI tools
 
 - `gh` (GitHub CLI) is at `/opt/homebrew/bin/gh` — use this full path, it is not on the default PATH in Claude Code sessions.
-- `node` / `npm` / `pnpm` / `npx` are managed by fnm, initialised via `~/.zshenv`. They should be on PATH in all subshells without any manual prefix.
 - `tailscale` CLI ships inside the macOS app bundle at `/Applications/Tailscale.app/Contents/MacOS/Tailscale` — use this full path, it is not on PATH. (The user has an interactive-shell alias in `~/.zshrc`, but that isn't visible to non-interactive tool shells.)
 - `limactl` (Lima) is at `/opt/homebrew/bin/limactl` — not on the default PATH.
-- For `.claude/launch.json` (used by `preview_start`), processes are spawned directly without shell init. Use `/bin/sh` with an explicit `cd` to the project root (required for worktrees — getcwd fails otherwise) and `. ~/.zshenv` to load fnm: `{ "runtimeExecutable": "/bin/sh", "runtimeArgs": ["-c", "cd /absolute/path/to/project && . ~/.zshenv && pnpm dev"] }`. The `launch.json` is gitignored so the hardcoded path is fine.
-- New git worktrees need `pnpm install` run before the dev server will work — `node_modules` is not shared between worktrees.
+- For `.claude/launch.json` (used by `preview_start`), processes are spawned directly without shell init. Use `/bin/sh` with an explicit `cd` to the project root (required for worktrees — getcwd fails otherwise) and `. ~/.zshenv` to load fnm: `{ "runtimeExecutable": "/bin/sh", "runtimeArgs": ["-c", "cd /absolute/path/to/project && . ~/.zshenv && <the project's dev script>"] }`. The `launch.json` is gitignored so the hardcoded path is fine.
+- `node_modules` is not shared between worktrees, so a fresh worktree needs the project's install run before its dev server will work — using whichever manager the lockfile indicates.
 
 If a CLI tool isn't found on PATH, check `/opt/homebrew/bin/` before searching elsewhere. If found, use the full path and add it to this file for future sessions.
 
