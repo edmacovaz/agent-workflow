@@ -8,10 +8,12 @@ Personal dotfiles managed with [GNU Stow](https://www.gnu.org/software/stow/).
 |---------|--------|
 | `claude` | `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, `~/.claude/skills/` |
 | `git`    | `~/.gitconfig`, `~/.config/git/ignore` |
+| `opencode` | `~/.config/opencode/opencode.jsonc`, `~/.config/opencode/agents/`, `~/.config/opencode/commands/`, `~/.config/opencode-sandbox/config.json` |
 | `zsh`    | `~/.zshenv`, `~/.zprofile`, `~/.zshrc` |
 | `zed`    | `~/.config/zed/keymap.json`, `~/.config/zed/settings.json` |
 
 Everything else in `~/.claude/` (sessions, memory, history, cache) is unmanaged.
+Likewise unmanaged: opencode's plugin runtime in `~/.config/opencode/` (`node_modules`, `package*.json`, locks).
 Secrets are deliberately **not** tracked — notably `~/.config/gh/` (GitHub OAuth tokens).
 
 `sandbox-guest/` is **not** a stow package — it's source-only, copied into the sandbox VM by
@@ -39,7 +41,7 @@ brew install stow
 ```bash
 git clone git@github.com:edmacovaz/dotfiles.git ~/dotfiles
 cd ~/dotfiles
-stow claude git zsh zed
+stow claude git opencode zsh zed
 ```
 
 This creates symlinks in `~` pointing into the matching `~/dotfiles/<package>/` directories.

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "disabled_providers": ["opencode"],
+  "model": "opencode-go/kimi-k3",
+  "small_model": "opencode-go/deepseek-v4-flash",
+  "default_agent": "implementer",
+  "plugin": ["opencode-sandbox"],
+  "agent": {
+    "plan": {
+      "disable": true
+    }
+  },
+  "permission": {
+    "edit": "ask",
+    "bash": {
+      "*": "ask",
+      "*git status*": "allow",
+      "*git diff*": "allow",
+      "*git log*": "allow"
+    },
+    "external_directory": "ask"
+  }
+}
