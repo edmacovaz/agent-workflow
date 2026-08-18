@@ -40,12 +40,6 @@
   },
   "ui_font_size": 16,
   "buffer_font_size": 15,
-  // Keep Zed-created git worktrees where we standardised them (../sted-worktrees
-  // relative to the repo root). Testing whether Zed will also *list* CLI-created
-  // worktrees that live here in the "Open Worktrees" picker (EDM-317).
-  "git": {
-    "worktree_directory": "../sted-worktrees",
-  },
   "theme": {
     "mode": "system",
     "light": "One Light",
