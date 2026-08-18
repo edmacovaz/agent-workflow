@@ -3,9 +3,6 @@
     "commit": "",
     "pr": ""
   },
-  "model": "opus",
-  "effortLevel": "high",
-  "theme": "dark",
   "permissions": {
     "allow": [
       "mcp__claude_ai_Linear__get_issue",
@@ -38,5 +35,9 @@
         ]
       }
     ]
-  }
+  },
+  "effortLevel": "high",
+  "theme": "dark",
+  "agentPushNotifEnabled": true,
+  "model": "claude-opus-5"
 }
