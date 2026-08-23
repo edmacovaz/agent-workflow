@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Agree a plan for a Linear issue and record it on the issue before any code — the "no code yet" gate. Use after grooming an issue, before /start-work; runs read-only in the Zed worktree against latest main (no branch yet). Not for environment setup or cutting the branch — that's /start-work.
+description: Agree a plan for a Linear issue and record it on the issue before any code — the "no code yet" gate. Use after grooming an issue, before /start-work; runs read-only in the issue's worktree — no changes, no branch cut. Not for environment setup or cutting the branch — that's /start-work.
 ---
 
 Plan the work for a Linear issue before writing any code. The issue is the spec container — read it via the Linear MCP and record the agreed plan back onto it. Do **not** create in-repo `spec.md` / `plan.md` / `tasks.md` files.
@@ -11,7 +11,7 @@ Plan the work for a Linear issue before writing any code. The issue is the spec 
 ## Steps
 
 ### 1. Read the issue
-Take the issue identifier from $ARGUMENTS — planning runs before `/start-work` cuts the branch, so the worktree is still on `main` and there's no issue branch to infer from yet. (Only when resuming a plan after `start-work` can you fall back to the branch name — the suffix after the last `-`, e.g. `...-edm-179` → `EDM-179`.) Fetch it via the Linear MCP and read the description, any linked documents, attachments, and comments. This is the spec.
+Take the issue identifier from $ARGUMENTS. The worktree may already sit on a branch that has nothing to do with the issue — Orca names its own — so the branch is **not** a reliable source for the identifier. If $ARGUMENTS is empty, ask which issue rather than inferring one. Fetch it via the Linear MCP and read the description, any linked documents, attachments, and comments. This is the spec.
 
 ### 2. Read before forming a view
 Read the files most likely relevant to the issue — don't guess from the title alone. Use Glob and Grep to find the actual code involved, and read AGENTS.md for the project's principles, code style, test strategy, and scope. Understand what exists before proposing what to change.
@@ -36,3 +36,7 @@ Once agreed, write the plan into the Linear issue as a `## Plan` section in the 
 
 ### 5. Hold the gate
 Do not edit, create, or delete any code until the plan is agreed and recorded on the issue, and the user has explicitly said to proceed. A vague "ok" is enough — but the conversation and the recorded plan must come first.
+
+## Known gotchas
+
+- **The branch is not the issue.** Orca creates each worktree already on its own generated branch (e.g. `edmacovaz/galeocerdo`), so the branch pre-filled above will rarely be `main` and never encodes the issue identifier. Take the issue from $ARGUMENTS or ask; never parse it out of the branch name.
