@@ -11,7 +11,7 @@ Plan the work for a Linear issue before writing any code. The issue is the spec 
 ## Steps
 
 ### 1. Read the issue
-Take the issue identifier from $ARGUMENTS. The worktree may already sit on a branch that has nothing to do with the issue — Orca names its own — so the branch is **not** a reliable source for the identifier. If $ARGUMENTS is empty, ask which issue rather than inferring one. Fetch it via the Linear MCP and read the description, any linked documents, attachments, and comments. This is the spec.
+Take the issue identifier from $ARGUMENTS; if it is empty, ask which issue rather than inferring one — the branch will not tell you (see gotchas). Fetch it via the Linear MCP and read the description, any linked documents, attachments, and comments. This is the spec.
 
 ### 2. Read before forming a view
 Read the files most likely relevant to the issue — don't guess from the title alone. Use Glob and Grep to find the actual code involved, and read AGENTS.md for the project's principles, code style, test strategy, and scope. Understand what exists before proposing what to change.
@@ -34,9 +34,12 @@ Treat this as a conversation, not a one-shot. Iterate on the proposal until the 
 ### 4. Record the agreed plan on the issue
 Once agreed, write the plan into the Linear issue as a `## Plan` section in the description (via the Linear MCP). The issue — not a repo file — is the canonical home for the plan. If the issue already carries a plan that's gone stale, rewrite that section to match what was just agreed rather than appending a second one — keep the canonical description current.
 
+Finish by moving the issue to the status that means *planned, not started* — `Planned` where the team has one. If it doesn't, leave the status alone and say so rather than forcing a near-match.
+
 ### 5. Hold the gate
 Do not edit, create, or delete any code until the plan is agreed and recorded on the issue, and the user has explicitly said to proceed. A vague "ok" is enough — but the conversation and the recorded plan must come first.
 
 ## Known gotchas
 
 - **The branch is not the issue.** Orca creates each worktree already on its own generated branch (e.g. `edmacovaz/galeocerdo`), so the branch pre-filled above will rarely be `main` and never encodes the issue identifier. Take the issue from $ARGUMENTS or ask; never parse it out of the branch name.
+- **Statuses are team-scoped.** `Planned` existing on one team says nothing about another — Linear creates them per team. Read the target team's list before setting one; don't reuse an earlier reading.
