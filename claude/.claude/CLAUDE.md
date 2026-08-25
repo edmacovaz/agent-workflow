@@ -1,3 +1,6 @@
+- ALWAYS flag what's based on memory or inference when referring to the state of code or infrastructure
+- ALWAYS answer or respond to requests first, add any new learnings or follow up questions afterwards
+
 # Working conventions
 
 ## Spec-driven workflow
