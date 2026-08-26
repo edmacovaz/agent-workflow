@@ -11,6 +11,12 @@ import argparse, json, os, subprocess, sys, time
 PANEL = ["opencode-go/gpt-5.6-luna", "opencode-go/deepseek-v4-flash",
          "opencode-go/qwen3.7-plus", "opencode-go/ox-alpha-free"]
 
+# opencode retitles its own terminal from the task it is given, overwriting whatever
+# --title we pass, so a title can never identify a terminal. Handles are the only
+# stable identity, and they die with the process unless written down — hence this file,
+# which lets a later run reclaim terminals a crashed one leaked.
+STATE = "agents/out/.terminals.json"
+
 SPEC = ("Review the artifact at {artifact} against the intent at {intent}. Both are inside this "
         "worktree; read them, and read any repository files needed to check the artifact's claims. "
         "Write your findings JSON to {report}, then report worker_done with --outcome succeeded and "
@@ -51,6 +57,31 @@ def collect(expected, timeout_ms):
     return done
 
 
+def close_terminal(handle):
+    subprocess.run(["orca", "terminal", "close", "--terminal", handle, "--json"],
+                   capture_output=True, text=True)
+
+
+def record_handles(handles):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE, "w") as fh:
+        json.dump(sorted(handles), fh)
+
+
+def reclaim_orphans():
+    """Close terminals a previous run left behind. Titles cannot identify them."""
+    if not os.path.exists(STATE):
+        return
+    try:
+        stale = json.load(open(STATE))
+    except (json.JSONDecodeError, OSError):
+        stale = []
+    for h in stale:
+        print(f"  reclaiming orphaned terminal {h}", file=sys.stderr)
+        close_terminal(h)
+    os.remove(STATE)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--artifact", action="append", required=True,
@@ -64,6 +95,8 @@ def main():
     if len(args.artifact) != len(args.intent):
         sys.exit("--artifact and --intent must be given the same number of times")
 
+    reclaim_orphans()
+
     run = orca("orchestration", "run-create", "--objective", "LAB-31 jury corpus")["run"]["id"]
     print(f"run: {run}", file=sys.stderr)
 
@@ -71,9 +104,10 @@ def main():
     for model in args.models:
         h = orca("terminal", "create", "--worktree", "current", "--title", f"juror {model.split('/')[-1]}",
                  "--command", f"opencode --agent juror -m {model}")["terminal"]["handle"]
-        orca("terminal", "wait", "--terminal", h, "--for", "tui-idle", "--timeout-ms", "120000", timeout=180)
         terminals[model] = h
-        print(f"  juror ready: {model}", file=sys.stderr)
+        record_handles(terminals.values())   # before the wait: a boot that times out still leaks a terminal
+        orca("terminal", "wait", "--terminal", h, "--for", "tui-idle", "--timeout-ms", "120000", timeout=180)
+        print(f"  juror ready: {model} ({h})", file=sys.stderr)
 
     results = []
     try:
@@ -110,8 +144,9 @@ def main():
             print(f"{name}: settled in {results[-1]['seconds']}s", file=sys.stderr)
     finally:
         for h in terminals.values():
-            subprocess.run(["orca", "terminal", "close", "--terminal", h, "--json"],
-                           capture_output=True, text=True)
+            close_terminal(h)
+        if os.path.exists(STATE):
+            os.remove(STATE)
 
     json.dump({"run": run, "results": results}, sys.stdout, indent=2)
     print()
