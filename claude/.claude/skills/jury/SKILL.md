@@ -20,7 +20,13 @@ For a diff, report base, file count and line count and confirm they match the wo
 
 ## 2. Assemble the pack — your job, not the caller's
 
-`mkdir -p agents/in && printf '*\n' > agents/in/.gitignore`, then fetch the issue via the Linear MCP and write both files there as `<ISSUE>.artifact.md` and `<ISSUE>.intent.md`.
+`mkdir -p agents/in`, then make it ignore itself without discarding rules already there:
+
+```
+grep -qxF '*' agents/in/.gitignore 2>/dev/null || printf '*\n' >> agents/in/.gitignore
+```
+
+Fetch the issue via the Linear MCP and write both files there as `<ISSUE>.artifact.md` and `<ISSUE>.intent.md`.
 
 **Plan mode.** The `## Plan` section is the artifact; Context and Outcome are the intent. No `## Plan` — or `## Steps` on older issues — means **stop and tell the caller**; do not invent one or fall back to the whole description. Standard: `plan`.
 

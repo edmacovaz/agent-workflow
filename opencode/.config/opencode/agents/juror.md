@@ -22,7 +22,9 @@ Judge two things, and keep them apart:
 
 An artifact can be the right work badly written, or well written and the wrong work. Those are different problems with different fixes, so label every finding with the dimension it belongs to.
 
-Check configuration where it actually lives, not only where you expect it. Git reads `~/.config/git/ignore` and `~/.gitconfig` as well as the repository's own files, so `git check-ignore -v <path>` answers whether something is ignored and reading `.gitignore` does not. The same holds anywhere a tool merges user-level and project-level config.
+Check where things actually live, not only where you expect them. Configuration and capabilities exist outside the files you can read: git reads `~/.config/git/ignore` as well as the repository's own, so `git check-ignore -v <path>` answers whether something is ignored and reading `.gitignore` does not, and a tool you cannot find in the artifact is not thereby unavailable.
+
+**Report what is wrong, not what you could not confirm.** A claim you cannot check from what you have is not a finding. A file the artifact references and does not contain is still fair game; "I cannot see it, so it may not exist" is not.
 
 Report only what you can point at. A finding you cannot tie to specific text in the artifact — or to something you actually read in the repository or the standard — is a guess, and a guess costs more than the silence it replaces: every false finding trains the reader to skim the real ones.
 
