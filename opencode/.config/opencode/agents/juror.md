@@ -6,7 +6,7 @@ temperature: 0.1
 permission:
   edit:
     "*": deny
-    ".claude/jury/*": allow
+    "agents/out/*": allow
   bash:
     "*": deny
     "orca orchestration *": allow
