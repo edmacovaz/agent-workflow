@@ -95,6 +95,20 @@ def check_models(models):
         raise RuntimeError(f"unknown model(s): {', '.join(unknown)} — see `opencode models`")
 
 
+def resolve_worktree(root):
+    """Orca's bare `current` selector resolves the terminal *pane's* identity, stamped when
+    the pane was created and never reconciled with the process's working directory. A
+    session whose pane was made in another repo dispatches jurors into that repo — or fails
+    outright once that worktree is gone, which is how this was found. `worktree current`
+    answers from the directory instead (LAB-46)."""
+    wt = orca("worktree", "current")["worktree"]
+    if os.path.realpath(wt["path"]) != os.path.realpath(root):
+        raise RuntimeError(
+            f"Orca resolves this directory to {wt['path']}, but the repository root is "
+            f"{root} — jurors would run against the wrong repository")
+    return wt["id"]
+
+
 def mins(seconds):
     """Round up: telling someone 0m left when 40s remain reads as a hang."""
     return f"{max(0, int(seconds) + 59) // 60}m"
@@ -290,12 +304,13 @@ def main():
         ensure_ignored(args.out)     # jurors write here, and the caller watches it
         reclaim_orphans(os.path.join(args.out, STATE_DIR), state)
         check_models(args.models)
+        worktree = resolve_worktree(root)
         run = orca("orchestration", "run-create", "--objective", args.objective)["run"]["id"]
 
         boot_failed = {}
         for model in args.models:
             try:
-                h = orca("terminal", "create", "--worktree", "current",
+                h = orca("terminal", "create", "--worktree", worktree,
                          "--title", f"juror {model.split('/')[-1]}",
                          "--command", f"opencode --agent juror -m {model}")["terminal"]["handle"]
                 terminals[model] = h
@@ -321,6 +336,7 @@ def main():
                                 "--spec", SPEC.format(artifact=artifact, intent=intent, report=report,
                                                       standard=args.standard))["task"]["id"]
                     d = orca("orchestration", "worker-start", "--task", task,
+                             "--worktree", worktree,
                              "--terminal", handle)["dispatchId"]
                 except Exception as exc:
                     dead[model] = f"dispatch failed: {exc}"

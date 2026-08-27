@@ -45,13 +45,15 @@ def argv(**kw):
     return a
 
 
-def stub_orca(dispatch_id="d1", on_start=None):
+def stub_orca(dispatch_id="d1", on_start=None, worktree_path=None):
     def orca(*a, **k):
         op = " ".join(a[:2])
         if op == "orchestration worker-start":
             if on_start:
                 on_start()
             return {"dispatchId": dispatch_id}
+        if op == "worktree current":
+            return {"worktree": {"id": "wt", "path": worktree_path or os.getcwd()}}
         return {"orchestration run-create": {"run": {"id": "R"}},
                 "terminal create": {"terminal": {"handle": "h"}},
                 "terminal wait": {},
@@ -135,6 +137,8 @@ def test_boot_failure_does_not_end_the_panel():
             if op == "orchestration worker-start":
                 n["dispatch"] += 1
                 return {"dispatchId": f"d{n['dispatch']}"}
+            if op == "worktree current":
+                return {"worktree": {"id": "wt", "path": os.getcwd()}}
             return {"orchestration run-create": {"run": {"id": "R"}}, "terminal wait": {},
                     "orchestration task-create": {"task": {"id": "t"}}}.get(op, {})
         j.orca = orca
@@ -383,6 +387,55 @@ def test_orca_failure_is_never_reasonless():
             assert "no output" in str(exc), exc
     finally:
         subprocess.run = real
+
+
+# --------------------------------------------------------------------- iteration 12
+def test_dispatch_carries_a_resolved_worktree_not_the_word_current():
+    """Orca's bare `current` selector resolves the terminal *pane*, not the working
+    directory. A session whose pane was created in a sted worktree while the runner worked
+    in dotfiles asked Orca to place every juror in the wrong repository — and once that
+    worktree was deleted, all four dispatches failed with selector_not_found (LAB-46)."""
+    j = load(); prev = os.getcwd(); os.chdir(repo())
+    calls, base = [], stub_orca()
+    try:
+        os.makedirs("out")
+        j.check_models = lambda m: None
+        j.collect = lambda e, t, r: {}
+        def orca(*a, **k):
+            calls.append(list(a)); return base(*a, **k)
+        j.orca = orca
+        sys.argv = argv(run_id="W", out="out", models="m/alpha")
+        j.main()
+        for op in ("terminal create", "orchestration worker-start"):
+            c = next(c for c in calls if " ".join(c[:2]) == op)
+            assert "--worktree" in c, (op, c)
+            assert c[c.index("--worktree") + 1] == "wt", (op, c)
+    finally:
+        os.chdir(prev)
+
+
+def test_runner_refuses_a_worktree_that_is_not_the_repo_under_review():
+    """The mismatch must stop the run before anything boots: a juror started in another
+    repository checks that repository's code against this one's claims, and writes its
+    report where the runner never looks."""
+    j = load(); prev = os.getcwd(); os.chdir(repo())
+    calls = []
+    try:
+        os.makedirs("out")
+        j.check_models = lambda m: None
+        j.collect = lambda e, t, r: {}   # a regression must fail here, not hang in a poll
+        base = stub_orca(worktree_path="/somewhere/else")
+        def orca(*a, **k):
+            calls.append(" ".join(a[:2])); return base(*a, **k)
+        j.orca = orca
+        sys.argv = argv(run_id="M", out="out", models="m/alpha")
+        try:
+            j.main(); raise AssertionError("expected a refusal")
+        except RuntimeError as exc:
+            assert "wrong repository" in str(exc), exc
+        assert "terminal create" not in calls, "booted a terminal before refusing"
+    finally:
+        os.chdir(prev)
 
 
 def main():
