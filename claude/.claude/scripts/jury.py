@@ -38,9 +38,13 @@ SPEC = ("Review the artifact at {artifact} against the intent at {intent}. Both 
 
 
 def orca(*args, timeout=120):
+    """orca reports failures as JSON on stdout and leaves stderr empty, so reading stderr
+    alone strips the reason off every error — a whole panel once reported
+    'worker-start failed: ' with nothing after the colon."""
     proc = subprocess.run(["orca", *args, "--json"], capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
-        raise RuntimeError(f"orca {' '.join(args[:2])} failed: {proc.stderr[-400:]}")
+        detail = (proc.stderr.strip() or proc.stdout.strip() or "no output")[-400:]
+        raise RuntimeError(f"orca {' '.join(args[:2])} failed: {detail}")
     return json.loads(proc.stdout).get("result", {})
 
 

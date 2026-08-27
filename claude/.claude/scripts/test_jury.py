@@ -349,6 +349,42 @@ def test_output_lands_at_the_repo_root_not_the_cwd():
         os.chdir(prev)
 
 
+# --------------------------------------------------------------------- iteration 11
+def _failing_run(stdout, stderr):
+    return lambda *a, **k: type("P", (), {"returncode": 1, "stdout": stdout, "stderr": stderr})()
+
+
+def test_orca_failures_carry_their_reason():
+    """orca puts its error in JSON on stdout and leaves stderr empty. Reading stderr alone
+    stripped the reason off every failure: on LAB-38's first cold run all four jurors
+    reported 'worker-start failed: ' with nothing after the colon, while the cause sat
+    unread in stdout."""
+    j = load(); real = subprocess.run
+    subprocess.run = _failing_run('{"ok": false, "error": {"message": "Missing required --task"}}', "")
+    try:
+        try:
+            j.orca("orchestration", "worker-start"); raise AssertionError("expected a raise")
+        except RuntimeError as exc:
+            assert "Missing required --task" in str(exc), exc
+    finally:
+        subprocess.run = real
+
+
+def test_orca_failure_is_never_reasonless():
+    """An error with an empty reason reads as a mystery rather than a bug, so the one thing
+    this must never do is report a failure with nothing after the colon."""
+    j = load(); real = subprocess.run
+    subprocess.run = _failing_run("", "")
+    try:
+        try:
+            j.orca("terminal", "create"); raise AssertionError("expected a raise")
+        except RuntimeError as exc:
+            assert not str(exc).rstrip().endswith(":"), f"reasonless error: {exc!r}"
+            assert "no output" in str(exc), exc
+    finally:
+        subprocess.run = real
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = []
