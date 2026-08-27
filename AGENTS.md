@@ -19,6 +19,10 @@ change. The same applies to `claude/.claude/scripts/jury.py`.
 
 Secrets are never tracked; `README.md` lists what is deliberately excluded.
 
+**Commit is not enough — push.** Worktrees are cut from `origin/main`, so an unpushed change
+here is invisible to every new session, including ones that would otherwise have loaded this
+file.
+
 ## Layout
 
 | Path | Holds |
