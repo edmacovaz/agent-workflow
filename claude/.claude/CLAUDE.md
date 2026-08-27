@@ -53,8 +53,6 @@ Add README with setup instructions (EDM-185)
 
 Each issue/PR gets its **own git worktree**, and **you (the user) create it in Zed's picker** — not the agent. Zed generates the worktree's name and location; that's fine, leave it. The agent never creates worktrees (no `EnterWorktree`-into-`.claude`), and there's no "Add Folders to Project" step — you already opened it in Zed.
 
-**Exception — `~/dotfiles` is worked directly on `main`.** Stow symlinks point at the main checkout, so a worktree there would edit a copy nothing consumes. Don't create one, don't expect one, and don't treat being in the primary checkout as a mistake to correct. Commit on `main` — and push: worktrees are cut from `origin/main`, so an unpushed dotfiles change is invisible to every new session. Repo context is in `~/dotfiles/AGENTS.md`.
-
 The flow, all inside that one Zed worktree:
 
 - **Create + open** the worktree in Zed, off the latest `main`. Run the Claude session there.
@@ -64,7 +62,7 @@ The flow, all inside that one Zed worktree:
 Guardrails:
 - The agent works only in the worktree the session is anchored to; a global hook blocks edits to a *different* worktree of the same repo (see the worktree-anchoring memory). Anchor absolute Read/Edit paths to the worktree root.
 - If a session isn't in the intended worktree, switch into an existing one with `EnterWorktree` (`path: …`); still don't *create* one.
-- `/start-work` must not cut a branch in the **main checkout** — if it detects the primary worktree, it stops and asks you to create/open a Zed worktree (dotfiles excepted — see above).
+- `/start-work` must not cut a branch in the **main checkout** — if it detects the primary worktree, it stops and asks you to create/open a Zed worktree.
 - Don't touch an *unrelated* worktree (one that isn't for the issue at hand).
 
 # Infrastructure (cross-project)

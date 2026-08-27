@@ -9,9 +9,10 @@ built here rather than somewhere less revertible.
 
 ## How work happens here
 
-**This repo is worked directly on `main`.** Stow symlinks point at the main checkout, so a
-worktree would mean editing a copy nothing consumes. This is deliberate, and it overrides
-the usual worktree-per-issue convention.
+**This repo is worked on `main`, in the main checkout.** `~/.claude` symlinks point there —
+`~/.claude/skills -> ../dotfiles/claude/.claude/skills` — so a change made anywhere else is a
+copy nothing consumes. That is why the usual worktree-per-issue convention is overridden here.
+Reading from anywhere is fine; before changing anything from somewhere else, stop and ask.
 
 **Edits are live on save.** `claude/.claude/skills/` is symlinked into `~/.claude/skills/`,
 so changing a skill changes what running sessions use — including the session making the
@@ -19,9 +20,8 @@ change. The same applies to `claude/.claude/scripts/jury.py`.
 
 Secrets are never tracked; `README.md` lists what is deliberately excluded.
 
-**Commit is not enough — push.** Worktrees are cut from `origin/main`, so an unpushed change
-here is invisible to every new session, including ones that would otherwise have loaded this
-file.
+**Commit is not enough — push.** An unpushed change here won't reach other checkouts or new
+sessions, including ones that would otherwise have loaded this file.
 
 ## Layout
 
@@ -36,9 +36,8 @@ file.
 
 ## Orchestration
 
-Workers are dispatched through **Orca**, the only layer on this machine that orchestrates
-across harnesses — durable Run/Task/Dispatch state, typed messaging, decision gates, and
-per-worker model selection.
+Workers are dispatched through **Orca** — durable Run/Task/Dispatch state, typed messaging,
+decision gates, and per-worker model selection.
 
 The division of responsibility: **Orca owns placement, state and stop rules; Claude owns
 judgment.** Orca's own dispatch backstop is separate from any loop's iteration cap — they
@@ -94,6 +93,9 @@ python3 ~/.claude/scripts/test_jury.py
 No test framework, deliberately: it must run anywhere the jury does, with nothing installed.
 Every test exists because a real run broke, and names the iteration it came from — so a
 failing test says which decision is being reversed rather than just going red.
+
+Run them from the main checkout: `~/.claude/scripts/` resolves there, so running from
+elsewhere exercises that copy rather than your edit.
 
 ## What deliberately isn't here
 
