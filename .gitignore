@@ -1,3 +1,6 @@
 # Claude Code session artifacts created when running it inside this repo.
 # (The stow package lives at claude/.claude/ — this only ignores the repo-root one.)
 /.claude/
+
+# tool backups (e.g. Orca backing up settings.json before writing)
+*.bak
