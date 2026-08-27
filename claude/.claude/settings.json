@@ -166,6 +166,5 @@
   },
   "effortLevel": "high",
   "theme": "dark",
-  "agentPushNotifEnabled": true,
-  "skipDangerousModePermissionPrompt": true
+  "agentPushNotifEnabled": true
 }
