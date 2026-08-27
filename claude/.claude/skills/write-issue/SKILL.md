@@ -8,16 +8,19 @@ Write a Linear issue someone can pick up without you in the room. Describe the p
 ## Shape
 - **Context** — the problem and its root cause, and where it surfaced (e.g. "found in EDM-317 device testing"). Concrete, not abstract.
 - **Outcome** — what should be true when it's done. Describe the end state, not the implementation.
+- **Scenarios** — the situations the outcome will be experienced in: who meets it, from where, and on what (convened from any session; against a plan or a diff). Situations of use, not test cases.
 - **Notes** — constraints, options, related issues to link. A pointer to the relevant area is fine for orientation; a design is not.
 
 ## Always
 - Lead with the outcome and the problem behind it — let whoever picks it up decide the how.
+- Settle the scenarios before the outcome — they change what the outcome has to be.
 - Scope to one coherent change; if it's several, split into separate issues.
 - For anything touching schema, infra, external services, or a deployed contract: capture the production path (migration, rollout, breaking change, prod-only config) in scope, or explicitly state it's tracked elsewhere — never leave it implicit (see Definition of done).
 - Set team, project, assignee, and relations.
 
 ## Never
 - Write the implementation, a spec, or a design — that's the picker-upper's call.
+- Write verification steps — a plan turns scenarios into verification, and that belongs on the plan.
 - Bury a migration, breaking change, or rollout need as an afterthought.
 - Pad with restated context or hypothetical future scope.
 
