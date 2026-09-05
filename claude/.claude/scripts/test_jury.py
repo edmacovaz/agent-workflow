@@ -149,39 +149,82 @@ def test_boot_failure_does_not_end_the_panel():
         assert r["attempted"] == 3 and r["reported"] == 0, r
         by_model = {x["model"]: x["error"] for x in r["jurors"]}
         assert by_model["m/bravo"].startswith("boot failed"), by_model
-        assert by_model["m/alpha"] == "never reported", by_model
+        assert "never reported" not in by_model["m/alpha"], by_model   # iteration 13
         assert len([e for e in events if "bravo" in e]) == 1, events   # announced once
     finally:
         os.chdir(prev)
 
 
-# ------------------------------------------------------------------- iteration 6, 8
-def test_collect_honours_a_run_level_deadline():
+# ---------------------------------------------------------------- iteration 6, 8, 13
+def test_the_backstop_bounds_the_wait_but_never_explains_it():
+    """Iteration 6 made the deadline the stop rule.  Iteration 13 demotes it to a backstop:
+    it still bounds the wait, but what it reports is the state inspection found, never that
+    time ran out.  Three of four jurors on LAB-38-20260830-125849 were still `ready` when
+    they were written down as silent."""
     j = load(); clock = Clock(); j.time = clock
     events = []; j.event = events.append
-    expected = {"d1": "v/alpha", "d2": "v/bravo", "d3": "v/charlie", "d4": "v/delta"}
-    calls = []
+    expected = {"d1": {"model": "v/alpha"}, "d2": {"model": "v/bravo"}}
     def orca(*a, **k):
-        calls.append(list(a))
-        if "--timeout-ms" not in a:
-            return {}                            # the closing ack carries no wait
-        wait = int(a[a.index("--timeout-ms") + 1]) / 1000
-        if len(calls) == 1:
-            clock.t += 1
-            return {"deliveryId": "D1", "messages": [
-                {"type": "worker_done", "payload": {"dispatchId": d, "outcome": "succeeded"}}
-                for d in ("d1", "d2")]}
-        clock.t += wait
+        if " ".join(a[:2]) == "orchestration worker-show":
+            return {"dispatch": {"status": "dispatched", "last_heartbeat_at": None},
+                    "worker": {"state": "ready", "stage": "running"}}
+        if "--timeout-ms" in a:
+            clock.t += int(a[a.index("--timeout-ms") + 1]) / 1000
         return {"timedOut": True, "messages": [], "deliveryId": None}
     j.orca = orca
 
-    done = j.collect(expected, 600_000, "RUN")
-    assert len(done) == 2, done
-    assert clock.t - 1000.0 <= 600.0, "ran past its own deadline"
-    waits = [e for e in events if "still waiting" in e]
-    assert len(waits) == 1, waits                       # one heartbeat, at the halfway mark
-    assert "charlie" in waits[0] and "delta" in waits[0] and "bravo" not in waits[0]
-    assert all("up to" in e for e in events if "returned" in e), events
+    out = j.collect(expected, 600_000, "RUN")
+    assert clock.t - 1000.0 <= 600.0, "ran past its own backstop"
+    assert set(out) == {"d1", "d2"}, out            # every dispatch accounted for, not just settled ones
+    for rec in out.values():
+        assert rec["result"] == "unsettled" and rec["state"] == "ready", rec
+    reason = j.absence_reason(out["d1"])
+    assert "still ready" in reason and "never reported" not in reason, reason
+    assert not any("up to" in e or "left" in e for e in events), events
+
+
+def test_a_heartbeat_never_settles_a_juror():
+    """Iteration 13, LAB-48.  The runner settled on any message carrying a dispatch id, and
+    a `heartbeat` carries the same taskId/dispatchId pair as a `worker_done`.  glm-5.3-flash
+    was announced as returned, had sent no worker_done, wrote no report, and its task was
+    still `ready` when it was found by hand a day later."""
+    j = load(); clock = Clock(); j.time = clock
+    events = []; j.event = events.append
+    calls = []
+    def orca(*a, **k):
+        if " ".join(a[:2]) == "orchestration worker-show":
+            return {"dispatch": {}, "worker": {"state": "ready"}}
+        calls.append(list(a))
+        if "--timeout-ms" in a:
+            clock.t += int(a[a.index("--timeout-ms") + 1]) / 1000
+        if len(calls) == 1:
+            return {"deliveryId": "D1", "messages": [
+                {"type": "heartbeat",
+                 "payload": {"dispatchId": "d1", "taskId": "t1", "phase": "reviewing"}}]}
+        return {"timedOut": True, "messages": [], "deliveryId": None}
+    j.orca = orca
+
+    out = j.collect({"d1": {"model": "v/alpha"}}, 120_000, "RUN")
+    assert out["d1"]["result"] == "unsettled", out
+    assert out["d1"].get("phase") == "reviewing", out       # surfaced to the caller, not discarded
+    assert not any("returned" in e or "reported done" in e for e in events), events
+
+
+def test_only_worker_done_and_escalation_settle():
+    j = load(); clock = Clock(); j.time = clock
+    j.event = lambda m: None
+    def orca(*a, **k):
+        if " ".join(a[:2]) == "orchestration worker-show":
+            return {"dispatch": {}, "worker": {"state": "ready"}}
+        clock.t += 5
+        return {"deliveryId": "D1", "messages": [
+            {"type": "worker_done", "payload": {"dispatchId": "d1", "outcome": "succeeded"}},
+            {"type": "escalation", "body": "cannot read the artifact",
+             "payload": {"dispatchId": "d2"}}]}
+    j.orca = orca
+    out = j.collect({"d1": {"model": "v/a"}, "d2": {"model": "v/b"}}, 600_000, "RUN")
+    assert out["d1"]["result"] == "done" and out["d1"]["outcome"] == "succeeded", out
+    assert out["d2"]["result"] == "escalated", out
 
 
 def test_every_orca_call_is_well_formed():
@@ -207,7 +250,9 @@ def test_every_orca_call_is_well_formed():
         for i, tok in enumerate(c):
             if tok in ("--run", "--ack", "--types", "--timeout-ms"):
                 assert i + 1 < len(c) and not c[i + 1].startswith("--"), (tok, c)
-        assert c[c.index("--run") + 1] == "RUN", c
+        # inspection calls are addressed by dispatch id and carry no --run
+        if "--run" in c:
+            assert c[c.index("--run") + 1] == "RUN", c
 
 
 def test_crash_mid_collect_salvages_what_landed():
@@ -436,6 +481,416 @@ def test_runner_refuses_a_worktree_that_is_not_the_repo_under_review():
         assert "terminal create" not in calls, "booted a terminal before refusing"
     finally:
         os.chdir(prev)
+
+
+# --------------------------------------------------------------------- iteration 13
+def test_a_stderr_full_of_keepalives_never_masks_the_error():
+    """LAB-47.  orca puts its error in JSON on stdout and streams `_keepalive` lines to
+    stderr every 15 seconds during a --wait, so reading stderr first reported 180 seconds
+    of heartbeats as the reason a whole panel died."""
+    j = load(); real = subprocess.run
+    keepalives = "\n".join('{"_keepalive":true,"_heartbeat":true,"elapsedMs":%d}' % ms
+                           for ms in range(15000, 195000, 15000))
+    subprocess.run = _failing_run(
+        '{"ok": false, "error": {"code": "consumer_fenced", "message": "bound to another run"}}',
+        keepalives)
+    try:
+        try:
+            j.orca("orchestration", "check"); raise AssertionError("expected a raise")
+        except RuntimeError as exc:
+            assert "consumer_fenced" in str(exc), exc
+            assert "bound to another run" in str(exc), exc
+            assert "_keepalive" not in str(exc), exc
+    finally:
+        subprocess.run = real
+
+
+def test_keepalives_alone_still_leave_a_reason():
+    """A failure whose only output is the keepalive stream must not report a heartbeat as
+    its cause — nor a reasonless error, which iteration 11 already ruled out."""
+    j = load(); real = subprocess.run
+    subprocess.run = _failing_run("", '{"_keepalive":true,"elapsedMs":15000}')
+    try:
+        try:
+            j.orca("orchestration", "check"); raise AssertionError("expected a raise")
+        except RuntimeError as exc:
+            assert "_keepalive" not in str(exc), exc
+            assert "no output" in str(exc), exc
+    finally:
+        subprocess.run = real
+
+
+def test_release_treats_retained_as_success():
+    """Jury terminals are external to Orca — the runner creates them and passes
+    `--terminal` — so every release comes back `retained` and closes nothing.  Only
+    `release_unknown` is a failure; treating `retained` as one reports every juror broken."""
+    j = load()
+    j.orca = lambda *a, **k: {"terminalState": "retained"}
+    assert j.worker_release("d1") == "retained"
+    j.orca = _boom("release_unknown")
+    assert j.worker_release("d1").startswith("release failed"), j.worker_release("d1")
+
+
+def test_terminals_close_only_after_their_dispatches_settle():
+    """The runner closed terminals in its finally while dispatches were still open, and
+    Orca answered `stage: terminal_missing` — "The assigned worker terminal is no longer
+    live after orchestration recovery".  That failure was ours, not Orca's."""
+    j = load(); prev = os.getcwd(); os.chdir(repo())
+    try:
+        order = []
+        j.check_models = lambda m: None
+        j.event = lambda m: None
+        j.close_terminal = lambda h: order.append(f"close {h}")
+        def orca(*a, **k):
+            op = " ".join(a[:2])
+            if op.startswith("orchestration worker-"):
+                order.append(op.split()[-1])
+            if op == "orchestration worker-show":
+                return {"dispatch": {}, "worker": {"state": "ready"}}
+            if op == "orchestration worker-start":
+                return {"dispatchId": "d1"}
+            if op == "worktree current":
+                return {"worktree": {"id": "wt", "path": os.getcwd()}}
+            return {"orchestration run-create": {"run": {"id": "R"}},
+                    "terminal create": {"terminal": {"handle": "h1"}}, "terminal wait": {},
+                    "orchestration task-create": {"task": {"id": "t"}}}.get(op, {})
+        j.orca = orca
+        j.collect = lambda dispatches, timeout, run: {d: {"result": "unsettled"} for d in dispatches}
+        sys.argv = argv(run_id="S", out="out", models="m/alpha")
+        j.main()
+        assert "close h1" in order, order
+        assert order.index("worker-stop") < order.index("close h1"), order
+        assert order.index("worker-release") < order.index("close h1"), order
+        row = json.load(open("out/S.jury-result.json"))["results"][0]["jurors"][0]
+        assert row["settled_by"].startswith("stopped"), row      # and it reaches the caller
+    finally:
+        os.chdir(prev)
+
+
+def test_the_recovery_sweep_skips_a_live_run_and_settles_a_dead_one():
+    """26 task records across 18 runs, the oldest four days stale.  Orca reclaims worker
+    terminals on its own; it never settles task or dispatch records, and until now nothing
+    else did either."""
+    j = load(); calls = []
+    j.close_terminal = lambda h: None
+    def orca(*a, **k):
+        calls.append(" ".join(a[:2]))
+        return {"dispatch": {}, "worker": {"state": "ready"}}
+    j.orca = orca
+    d = tempfile.mkdtemp(); sd = os.path.join(d, ".terminals")
+    live = os.path.join(sd, "live.json")
+    j.record_handles(live, ["h-live"], "run_live", ["ctx_live"])
+    dead = os.path.join(sd, "dead.json")
+    j.record_handles(dead, ["h-dead"], "run_dead", ["ctx_dead"])
+    s = json.load(open(dead)); s["pid"] = 999999; json.dump(s, open(dead, "w"))
+
+    j.reclaim_orphans(sd, os.path.join(sd, "mine.json"))
+    assert "orchestration run-use" in calls, calls            # required before its tasks resolve
+    assert "orchestration worker-abandon" in calls, calls     # records only; no process action
+    assert "orchestration worker-release" in calls, calls
+    assert os.path.exists(live) and not os.path.exists(dead)
+    assert "run_live" not in str(calls), calls
+
+
+def test_a_report_without_a_worker_done_is_kept_and_flagged():
+    """LAB-48's other half.  deepseek-v4-flash wrote a report and was never announced,
+    because the progress stream was built from messages and the verdict from files.  The
+    report is real and must survive; what it must not do is pass as a confirmed return."""
+    j = load()
+    report = {"verdict": "pass", "findings": []}
+    row = j.juror_row("v/alpha", "d1", {"result": "unsettled", "state": "ready"},
+                      {"parse_ok": True, "report": report})
+    assert row["parse_ok"] and row["report"] == report, row
+    assert row["returned"] is False and row["unconfirmed"], row
+
+    done = j.juror_row("v/bravo", "d2", {"result": "done", "outcome": "succeeded"}, None)
+    assert done["returned"] is False, done
+    assert done["error"] == "reported done but wrote no report", done
+
+
+def test_outcome_unknown_is_stopped_and_then_reported_as_what_it_became():
+    """Orca's recovery for `outcome_unknown` is to stop and inspect again, or abandon and
+    accept that resources may still be live.  A stop that does not take is itself the thing
+    to report, not a silence to pass on."""
+    j = load(); j.event = lambda m: None
+    stopped = []
+    def orca(*a, **k):
+        op = " ".join(a[:2])
+        if op == "orchestration worker-stop":
+            stopped.append(a)
+        if op == "orchestration worker-show":       # the inspection *after* the stop
+            return {"dispatch": {}, "worker": {"state": "stopped" if stopped else "outcome_unknown"}}
+        return {}
+    j.orca = orca
+    rec = j.resolve_unknown("d1", "alpha", {"state": "outcome_unknown"})
+    assert stopped, "never asked Orca to stop it"
+    assert rec["result"] == "failed" and rec["state"] == "stopped", rec
+
+    j2 = load(); j2.event = lambda m: None
+    j2.orca = lambda *a, **k: ({"dispatch": {}, "worker": {"state": "outcome_unknown"}}
+                               if " ".join(a[:2]) == "orchestration worker-show" else {})
+    rec2 = j2.resolve_unknown("d2", "bravo", {"state": "outcome_unknown"})
+    assert rec2["result"] == "abandoned" and "may still be live" in rec2["note"], rec2
+
+
+# --------------------------------------------------------------------- iteration 14
+def test_a_crash_in_collect_still_settles_before_closing():
+    """The panel's blocker.  `records` was filled only after collect() returned, so a crash
+    inside it left that artifact's dispatches unknown to settle_all while the finally closed
+    their terminals anyway — manufacturing the `terminal_missing` this change exists to
+    remove, on the one path most likely to hit it."""
+    j = load(); prev = os.getcwd(); os.chdir(repo())
+    try:
+        order = []
+        j.check_models = lambda m: None
+        j.event = lambda m: None
+        j.close_terminal = lambda h: order.append("close")
+        def orca(*a, **k):
+            op = " ".join(a[:2])
+            if op.startswith("orchestration worker-"):
+                order.append(op.split()[-1])
+            if op == "orchestration worker-show":
+                return {"dispatch": {}, "worker": {"state": "ready"}}
+            if op == "orchestration worker-start":
+                return {"dispatchId": "d1"}
+            if op == "worktree current":
+                return {"worktree": {"id": "wt", "path": os.getcwd()}}
+            return {"orchestration run-create": {"run": {"id": "R"}},
+                    "terminal create": {"terminal": {"handle": "h1"}}, "terminal wait": {},
+                    "orchestration task-create": {"task": {"id": "t"}}}.get(op, {})
+        j.orca = orca
+        j.collect = _boom("orca orchestration check failed: consumer_fenced")
+        sys.argv = argv(run_id="C", out="out", models="m/alpha")
+        try:
+            j.main(); raise AssertionError("expected the crash to propagate")
+        except RuntimeError:
+            pass
+        assert "close" in order, order
+        assert order.index("worker-stop") < order.index("close"), order
+        assert order.index("worker-release") < order.index("close"), order
+        assert os.path.exists("out/C.progress.jsonl"), "no progress survived the crash"
+    finally:
+        os.chdir(prev)
+
+
+def test_a_failed_dispatch_reading_ready_is_reported_promptly():
+    """classify() consulted worker.state alone, so a dispatch Orca had already marked
+    `failed` sat `ready` until the 30-minute backstop — longer than the seven minutes it
+    replaced, which is the opposite of what this issue is for."""
+    j = load(); clock = Clock(); j.time = clock
+    events = []; j.event = events.append
+    def orca(*a, **k):
+        if " ".join(a[:2]) == "orchestration worker-show":
+            return {"dispatch": {"status": "failed", "last_failure": "terminal gone"},
+                    "worker": {"state": "ready"}}
+        clock.t += 5
+        return {"timedOut": True, "messages": [], "deliveryId": None}
+    j.orca = orca
+
+    out = j.collect({"d1": {"model": "v/alpha"}}, 1_800_000, "RUN")
+    assert out["d1"]["result"] == "failed", out
+    assert clock.t - 1000.0 < 60.0, "waited on a dispatch Orca had already failed"
+    assert any("terminal gone" in e for e in events), events
+def test_the_sweep_releases_even_when_it_cannot_inspect():
+    """Release is bookkeeping and does not depend on the worker's state, so skipping it when
+    the inspection raises drops exactly the case the sweep exists to close."""
+    j = load(); calls = []
+    def orca(*a, **k):
+        op = " ".join(a[:2])
+        calls.append(op)
+        if op == "orchestration worker-show":
+            raise RuntimeError("worker_identity_changed")
+        return {}
+    j.orca = orca
+    j.settle_abandoned_run("run_dead", ["ctx_dead"])
+    assert "orchestration worker-release" in calls, calls
+
+
+def test_release_never_claims_more_than_orca_said():
+    """Run LAB-49-20260830-183854 recorded `release=released` for four workers whose
+    terminals Orca had retained as external.  The fallback asserted an outcome the receipt
+    never contained — the habit this whole issue is about."""
+    j = load()
+    j.orca = lambda *a, **k: {}
+    assert j.worker_release("d1") == "release accepted", j.worker_release("d1")
+    j.orca = lambda *a, **k: {"terminalState": "retained"}
+    assert j.worker_release("d1") == "retained"
+
+
+def test_progress_reaches_the_caller_during_the_wait():
+    """Monitor renders only its own description, so a wake says "something changed" and no
+    more.  Before this the only thing a waiting caller could see was which report files had
+    appeared — never that a juror was alive and working."""
+    j = load(); prev = os.getcwd(); os.chdir(repo())
+    try:
+        j.PROGRESS["path"] = "p.jsonl"
+        j.progress("state", "alpha is still reviewing", model="m/alpha",
+                   state="ready", heartbeat_age=40, phase=None)
+        j.progress("returned", "alpha returned", model="m/alpha")
+        rows = [json.loads(l) for l in open("p.jsonl")]
+        assert [r["kind"] for r in rows] == ["state", "returned"], rows
+        assert rows[0]["message"] == "alpha is still reviewing", rows
+        assert rows[0]["state"] == "ready" and rows[0]["heartbeat_age"] == 40, rows
+        assert "phase" not in rows[0], "None fields are noise, not state"
+    finally:
+        os.chdir(prev)
+
+
+def test_a_heartbeat_phase_reaches_the_caller_without_settling():
+    """`phase: reviewing` was the answer to "is this stalled" and was discarded.  It must
+    reach the caller *and* leave the juror unsettled — both halves, not either."""
+    j = load(); clock = Clock(); j.time = clock
+    j.event = lambda m: None; prev = os.getcwd(); os.chdir(repo())
+    try:
+        j.PROGRESS["path"] = "hb.jsonl"
+        calls = []
+        def orca(*a, **k):
+            if " ".join(a[:2]) == "orchestration worker-show":
+                return {"dispatch": {}, "worker": {"state": "ready"}}
+            calls.append(1)
+            clock.t += int(a[a.index("--timeout-ms") + 1]) / 1000 if "--timeout-ms" in a else 0
+            if len(calls) == 1:
+                return {"deliveryId": "D1", "messages": [
+                    {"type": "heartbeat",
+                     "payload": {"dispatchId": "d1", "phase": "reviewing"}}]}
+            return {"timedOut": True, "messages": [], "deliveryId": None}
+        j.orca = orca
+        out = j.collect({"d1": {"model": "v/alpha"}}, 120_000, "RUN")
+        assert out["d1"]["result"] == "unsettled", out
+        rows = [json.loads(l) for l in open("hb.jsonl")]
+        assert any(r["kind"] == "heartbeat" and r["phase"] == "reviewing" for r in rows), rows
+    finally:
+        os.chdir(prev)
+
+
+# --------------------------------------------------------------------- iteration 15
+def test_a_stop_that_reveals_a_success_is_not_reported_as_a_failure():
+    """glm-5.3-flash alone found this, and it was the sharpest of the four.  classify()
+    returns "succeeded" for a worker revealed finished after a stop, and resolve_unknown
+    called it failed anyway — which under --retry starts a replacement whose first act is to
+    delete the report that juror had already written."""
+    j = load(); j.event = lambda m: None
+    def orca(*a, **k):
+        if " ".join(a[:2]) == "orchestration worker-show":
+            return {"dispatch": {"status": "completed"}, "worker": {"state": "succeeded"}}
+        return {}
+    j.orca = orca
+    rec = j.resolve_unknown("d1", "alpha", {"state": "outcome_unknown"})
+    assert rec["result"] == "done" and rec["outcome"] == "succeeded", rec
+    assert "not observed" in rec["note"], rec
+
+
+def test_a_stop_that_reveals_a_dead_worker_still_reports_it_failed():
+    """The other half of the same branch: relabelling a success must not relabel a failure."""
+    j = load(); j.event = lambda m: None
+    j.orca = lambda *a, **k: ({"dispatch": {}, "worker": {"state": "stopped"}}
+                              if " ".join(a[:2]) == "orchestration worker-show" else {})
+    rec = j.resolve_unknown("d1", "alpha", {"state": "outcome_unknown"})
+    assert rec["result"] == "failed" and rec["state"] == "stopped", rec
+
+
+def test_release_unknown_is_the_one_release_failure():
+    """The docstring promised that only `release_unknown` fails while the code returned
+    whatever state arrived.  Orca exits 1 on it today, so the promise held by accident."""
+    j = load()
+    j.orca = lambda *a, **k: {"releaseState": "release_unknown"}
+    assert j.worker_release("d1").startswith("release failed"), j.worker_release("d1")
+    j.orca = lambda *a, **k: {"terminalState": "release_pending"}
+    assert j.worker_release("d1") == "release_pending"
+
+
+def test_the_state_file_lists_each_dispatch_once():
+    """Iteration 14 put every dispatch in `records` at creation while it was already in
+    `dispatches`, and the two were concatenated — so run LAB-49-20260830-195307 recorded all
+    four of its dispatches twice, and the recovery sweep would have abandoned and released
+    each of them twice."""
+    j = load(); prev = os.getcwd(); os.chdir(repo())
+    try:
+        j.check_models = lambda m: None
+        j.event = lambda m: None
+        n = {"d": 0}
+        def orca(*a, **k):
+            op = " ".join(a[:2])
+            if op == "orchestration worker-start":
+                n["d"] += 1
+                return {"dispatchId": "d%d" % n["d"]}
+            if op == "worktree current":
+                return {"worktree": {"id": "wt", "path": os.getcwd()}}
+            if op == "orchestration worker-show":
+                return {"dispatch": {}, "worker": {"state": "ready"}}
+            return {"orchestration run-create": {"run": {"id": "R"}},
+                    "terminal create": {"terminal": {"handle": "h%d" % n["d"]}},
+                    "terminal wait": {},
+                    "orchestration task-create": {"task": {"id": "t"}}}.get(op, {})
+        j.orca = orca
+        j.collect = lambda d, t, r: {k: {"result": "unsettled"} for k in d}
+        written, real = [], j.record_handles
+
+        def spy(path, handles, run=None, dispatches=()):
+            written.append(list(dispatches))
+            return real(path, handles, run, dispatches)
+        j.record_handles = spy
+
+        sys.argv = argv(run_id="ONCE", out="out", models=["m/a", "m/b"])
+        j.main()
+        last = written[-1]
+        assert last and len(last) == len(set(last)), last
+    finally:
+        os.chdir(prev)
+
+
+# --------------------------------------------------------------------- iteration 16
+def test_a_stop_that_does_not_take_reaches_the_caller():
+    """The Outcome requires that a stop which does not take is itself a reported outcome.
+    resolve_unknown recorded stop_error and nothing read it: juror_row copied by allow-list,
+    so any field nobody remembered to enumerate was dropped — `retry`/`retry_of` first, then
+    this."""
+    j = load()
+    row = j.juror_row("v/alpha", "d1",
+                      {"result": "abandoned", "stop_error": "worker_identity_changed",
+                       "note": "abandoned after outcome_unknown", "stale_reported": True},
+                      None)
+    assert row["stop_error"] == "worker_identity_changed", row
+    assert "stale_reported" not in row, row          # loop bookkeeping stays internal
+
+
+def test_a_completed_dispatch_is_never_stopped():
+    """classify() tested outcome_unknown before dispatchStatus, so a dispatch Orca had
+    already completed routed into resolve_unknown and was stopped — and the post-stop
+    inspection then read `stopped`, which is dead, so a juror whose verdict was on disk was
+    recorded as a failure."""
+    j = load()
+    assert j.classify({"state": "outcome_unknown", "dispatchStatus": "completed"}) == "succeeded"
+    assert j.classify({"state": "outcome_unknown", "dispatchStatus": "dispatched"}) == "unknown"
+    assert j.classify({"state": "failed", "dispatchStatus": "completed"}) == "dead"
+    assert j.classify({"state": "stopped", "dispatchStatus": "completed"}) == "dead"
+
+
+def test_a_replayed_message_is_processed_once():
+    """A Delivery replays until it is acknowledged, and `d in settled` guards only the types
+    that settle — so a replayed heartbeat emitted a duplicate line and a replayed question
+    was answered twice."""
+    j = load(); events = []; j.event = events.append
+    replies, seen, settled, watch = [], set(), {}, {}
+    j.orca = lambda *a, **k: replies.append(a) or {}
+    dispatches = {"d1": {"model": "v/alpha"}}
+    heartbeat = {"id": "m1", "type": "heartbeat",
+                 "payload": {"dispatchId": "d1", "phase": "reviewing"}}
+    question = {"id": "m2", "type": "question", "body": "which base?",
+                "payload": {"dispatchId": "d1"}}
+    for m in (heartbeat, heartbeat, question, question):
+        j.handle_message(m, dispatches, settled, watch, seen)
+    assert len([e for e in events if "reviewing" in e]) == 1, events
+    assert len([a for a in replies if a[:2] == ("orchestration", "reply")]) == 1, replies
+
+
+def test_retry_is_gone():
+    """89 dispatches, none ever `failed`: every non-success traced to the coordinator's own
+    terminal-closing defect or an explicit stop. Retry recovered from a condition that had
+    never occurred, and would have fired on all nineteen."""
+    j = load()
+    assert not hasattr(j, "retry_failures"), "retry_failures survived"
+    assert "--retry" not in open(SCRIPT).read(), "the --retry flag survived"
 
 
 def main():

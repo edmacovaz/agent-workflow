@@ -31,7 +31,7 @@ sessions, including ones that would otherwise have loaded this file.
 | `claude/.claude/scripts/` | `jury.py` (the panel runner) and `test_jury.py`. |
 | `claude/.claude/CLAUDE.md` | Global user instructions. Applies everywhere; merely stored here. |
 | `opencode/.config/opencode/` | `agents/juror.md` and `opencode.jsonc`. |
-| `agents/in`, `agents/out` | Jury packs and juror reports. Each holds a `.gitignore` of `*`, so they stay uncommittable in any clone rather than relying on the machine's global git config. |
+| `agents/in`, `agents/out` | Jury packs, juror reports, each run's `<run>.progress.jsonl`, and the `.terminals/` state files a later run reads to settle an abandoned predecessor. Each holds a `.gitignore` of `*`, so they stay uncommittable in any clone rather than relying on the machine's global git config. |
 | `sandbox-guest/` | Source-only, copied into the sandbox VM by the `sandbox` skill. Never symlinked into the host `~`, so host and VM agents keep separate instruction sets. |
 
 ## Orchestration
