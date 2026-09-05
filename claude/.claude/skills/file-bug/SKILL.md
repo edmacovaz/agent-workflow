@@ -3,6 +3,8 @@ name: file-bug
 description: File a bug as expected versus actual, with no diagnosis. Use when something is broken and the cause is not yet established. Not for specifying work — that is write-issue — and not for recording a fix already made.
 ---
 
+**Title** — the problem, six words or fewer, without the cause.
+
 Two sections. Nothing else.
 
 **Expected** — what should have happened.

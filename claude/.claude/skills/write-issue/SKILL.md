@@ -6,6 +6,7 @@ description: Write a clear, actionable Linear issue. Use when filing a new issue
 Write a Linear issue someone can pick up without you in the room. Describe the problem and the outcome; leave the implementation to whoever picks it up.
 
 ## Shape
+- **Title** — the outcome, verb-first, six words or fewer. The reason belongs in Context and the criterion in Outcome.
 - **Context** — the problem and its root cause, and where it surfaced (e.g. "found in EDM-317 device testing"). Concrete, not abstract.
 - **Outcome** — what should be true when it's done. Describe the end state, not the implementation.
 - **Scenarios** — the situations the outcome will be experienced in: who meets it, from where, and on what (convened from any session; against a plan or a diff). Situations of use, not test cases.
