@@ -10,8 +10,8 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 **roadmap → plan → start-work → (code) → review → open-pr → merge-deploy-check**
 
 - **roadmap** — review and groom the backlog; shape and prioritise issues (builds on `write-issue`).
-- **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet. Runs inside the worktree you created in Zed, against the latest `main` — no branch, no changes.
-- **start-work** — the gate between planning and coding: cut the issue's branch (Linear naming) off latest `main`, set up the worktree (deps + secrets), orient, mark In Progress. Runs in the same Zed worktree the plan ran in.
+- **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet. Read-only — no branch, no changes.
+- **start-work** — the gate between planning and coding: verify the worktree Orca created is for this issue, bring its base up to date, set it up (deps + secrets), orient, mark In Progress. Cuts nothing.
 - **code** — no skill of its own; the agreed plan + the project's AGENTS.md (principles, code style) + the built-in `/verify` and `/run` carry it.
 - **review** — review the diff before shipping (the `review-changes` skill): judge it against the issue's intent, audit AGENTS.md conformance, and wrap the built-in `/code-review` / `/simplify`. Non-side-effecting, so run it in multiple passes.
 - **open-pr** — commit, push, open the PR, set the issue to In Review.
@@ -51,19 +51,20 @@ Add README with setup instructions (EDM-185)
 
 ## Branches and worktrees
 
-Each issue/PR gets its **own git worktree**, and **you (the user) create it in Zed's picker** — not the agent. Zed generates the worktree's name and location; that's fine, leave it. The agent never creates worktrees (no `EnterWorktree`-into-`.claude`), and there's no "Add Folders to Project" step — you already opened it in Zed.
+**Orca owns placement.** Each issue gets its own git worktree, and Orca creates it — already on its own branch, off the repo's base ref, and held as a record carrying `path`, `branch`, `baseRef`, `displayName` and `linkedLinearIssue`. Read it with `orca worktree current --json`. The agent never creates worktrees: not `orca worktree create`, not `EnterWorktree`-into-`.claude`.
 
-The flow, all inside that one Zed worktree:
+Orca names the branch after the worktree (`edmacovaz/<name>`), so it carries the issue identifier only where the worktree was named for the issue. Linear's `gitBranchName` is **not** required — Linear links a PR by the identifier appearing in the branch name, the PR title, or a magic word plus identifier in the PR body. Don't rename Orca's branch to chase the exact name: the record stores the branch and has no way to follow a rename.
 
-- **Create + open** the worktree in Zed, off the latest `main`. Run the Claude session there.
-- **`/plan`** runs against latest `main` — read-only, no branch, no changes.
-- **`/start-work`** is the gate that cuts the branch: it fetches, creates the issue's branch (named exactly Linear's `gitBranchName`, for PR auto-linking) off latest `origin/main`, then runs the project's install + secrets setup (`node_modules` isn't shared between worktrees). Coding starts after this.
+The flow, all inside that one worktree:
+
+- **`/plan`** — read-only against the code as it stands. No branch, no changes.
+- **`/start-work`** — confirms the worktree is for this issue, fetches and reports how far its base has drifted from `baseRef` (advancing it only by fast-forward merge, and only with a clean tree), binds the worktree to the issue, then runs the project's install + secrets setup (`node_modules` isn't shared between worktrees). Coding starts after this.
 
 Guardrails:
 - The agent works only in the worktree the session is anchored to; a global hook blocks edits to a *different* worktree of the same repo (see the worktree-anchoring memory). Anchor absolute Read/Edit paths to the worktree root.
 - If a session isn't in the intended worktree, switch into an existing one with `EnterWorktree` (`path: …`); still don't *create* one.
-- `/start-work` must not cut a branch in the **main checkout** — if it detects the primary worktree, it stops and asks you to create/open a Zed worktree.
 - Don't touch an *unrelated* worktree (one that isn't for the issue at hand).
+- A repo overrides all of this in its AGENTS.md under `## How work happens here` — for example, declaring that it's worked on `main` in the main checkout. Where that policy and the session's actual placement disagree, `/start-work` stops and asks.
 
 # Infrastructure (cross-project)
 

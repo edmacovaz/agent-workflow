@@ -14,6 +14,9 @@ built here rather than somewhere less revertible.
 copy nothing consumes. That is why the usual worktree-per-issue convention is overridden here.
 Reading from anywhere is fine; before changing anything from somewhere else, stop and ask.
 
+This section is the override `start-work` reads: it is where a repo states where its work
+happens, and without it that skill applies its default of one Orca worktree per issue.
+
 **Edits are live on save.** `claude/.claude/skills/` is symlinked into `~/.claude/skills/`,
 so changing a skill changes what running sessions use — including the session making the
 change. The same applies to `claude/.claude/scripts/jury.py`.

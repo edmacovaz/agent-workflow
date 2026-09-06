@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Agree a plan for a Linear issue and record it on the issue before any code — the "no code yet" gate. Use after grooming an issue, before /start-work; runs read-only in the issue's worktree — no changes, no branch cut. Not for environment setup or cutting the branch — that's /start-work.
+description: Agree a plan for a Linear issue and record it on the issue before any code — the "no code yet" gate. Use after grooming an issue, before /start-work; runs read-only in the issue's worktree — no changes. Not for environment setup or verifying the worktree — that's /start-work.
 ---
 
 Plan the work for a Linear issue before writing any code. The issue is the spec container — read it via the Linear MCP and record the agreed plan back onto it. Do **not** create in-repo `spec.md` / `plan.md` / `tasks.md` files.
@@ -45,5 +45,5 @@ Do not edit, create, or delete any code until the plan is agreed and recorded on
 
 ## Known gotchas
 
-- **The branch is not the issue.** Orca creates each worktree already on its own generated branch (e.g. `edmacovaz/galeocerdo`), so the branch pre-filled above will rarely be `main` and never encodes the issue identifier. Take the issue from $ARGUMENTS or ask; never parse it out of the branch name.
+- **The branch is not the issue.** Orca creates each worktree already on its own generated branch, so the branch pre-filled above will rarely be `main`. It is named after the worktree (`edmacovaz/<name>`), which may or may not carry the issue identifier — `edmacovaz/LAB-52` does, `edmacovaz/galeocerdo` does not, and neither tells you the worktree is for the issue you were asked about. Take the issue from $ARGUMENTS or ask; never parse it out of the branch name.
 - **Statuses are team-scoped.** `Planned` existing on one team says nothing about another — Linear creates them per team. Read the target team's list before setting one; don't reuse an earlier reading.
