@@ -778,6 +778,8 @@ def test_a_stop_that_reveals_a_success_is_not_reported_as_a_failure():
     rec = j.resolve_unknown("d1", "alpha", {"state": "outcome_unknown"})
     assert rec["result"] == "done" and rec["outcome"] == "succeeded", rec
     assert "not observed" in rec["note"], rec
+    assert rec["reconstructed"] is True, "a record built from Orca's state yields to the "\
+        "worker_done that arrives after it (LAB-58)"
 
 
 def test_a_stop_that_reveals_a_dead_worker_still_reports_it_failed():
@@ -891,6 +893,143 @@ def test_retry_is_gone():
     j = load()
     assert not hasattr(j, "retry_failures"), "retry_failures survived"
     assert "--retry" not in open(SCRIPT).read(), "the --retry flag survived"
+
+
+# --------------------------------------------------------------------- iteration 17
+def completing_run(shows, windows):
+    """A collect() harness: `shows` answers worker-show per dispatch, `windows` is the list
+    of check results to hand back in order, and the clock advances by each wait."""
+    j = load(); clock = Clock(); j.time = clock; j.event = lambda m: None
+    served = []
+    def orca(*a, **k):
+        op = " ".join(a[:2])
+        if op == "orchestration worker-show":
+            d = a[a.index("--dispatch") + 1]
+            return shows(d)
+        if "--timeout-ms" in a:
+            clock.t += int(a[a.index("--timeout-ms") + 1]) / 1000
+        i = len(served)
+        served.append(1)
+        return windows[i] if i < len(windows) else {"messages": [], "deliveryId": None}
+    j.orca = orca
+    return j
+
+
+def done_message(d, path="r.json"):
+    return {"id": f"m-{d}", "type": "worker_done", "body": "reviewed",
+            "payload": {"dispatchId": d, "outcome": "succeeded", "reportPath": path}}
+
+
+def test_a_worker_done_arriving_after_its_dispatch_completed_still_counts():
+    """The whole of LAB-58.  Orca completes a dispatch the moment a valid worker_done
+    arrives, so the state flips while the message is still in the queue.  Settling on the
+    state left the message to be dropped by `d in settled` and the run reported no count at
+    all: three jurors, three `succeeded` lines, no `returned` (LAB-53-20260906-103254)."""
+    j = completing_run(lambda d: {"dispatch": {"status": "completed"},
+                                  "worker": {"state": "succeeded"}},
+                       [{"messages": [], "deliveryId": None},
+                        {"messages": [done_message("d1")], "deliveryId": "D1"}])
+    prev = os.getcwd(); os.chdir(repo())
+    try:
+        j.PROGRESS["path"] = "p.jsonl"
+        out = j.collect({"d1": {"model": "v/alpha"}}, 600_000, "RUN")
+        rows = [json.loads(l) for l in open("p.jsonl")]
+    finally:
+        os.chdir(prev)
+    assert out["d1"]["type"] == "worker_done", out
+    assert out["d1"]["reportPath"] == "r.json", out
+    assert [r["kind"] for r in rows] == ["returned"], rows
+    assert "1 of 1" in rows[0]["message"], rows
+    assert "late" not in rows[0], "it was waited for, not given up on"
+
+
+def test_a_completed_dispatch_is_not_announced_while_its_message_is_in_flight():
+    """Inspection saying `succeeded` is notification that a worker_done exists, not evidence
+    in its own right — so inside the grace it settles nothing and says nothing.  Announcing
+    is what made "worker_done not observed here" fire on the healthy path, where it was pure
+    noise; it has to mean something when it appears."""
+    j = completing_run(lambda d: {"dispatch": {"status": "completed"},
+                                  "worker": {"state": "succeeded"}}, [])
+    prev = os.getcwd(); os.chdir(repo())
+    try:
+        j.PROGRESS["path"] = "p.jsonl"
+        settled, watch = {}, {}
+        j.inspect_round({"d1": {"model": "v/alpha"}}, settled, watch,
+                        j.time.monotonic() + 10_000)
+        said_anything = os.path.exists("p.jsonl")   # written on the first line, not before
+    finally:
+        os.chdir(prev)
+    assert settled == {}, settled
+    assert not said_anything, "silence between changes, and this is not a change yet"
+    row = j.juror_row("v/alpha", "d1", dict(watch["d1"], result="unsettled"), None)
+    assert "completed_seen_at" not in row, \
+        "the grace clock is loop bookkeeping, not a field for the caller"
+    assert "had not arrived" in row["error"], row
+
+
+def test_a_message_that_never_arrives_is_settled_and_said_so():
+    """The grace is bounded: a completion whose message never comes is still reconciled
+    rather than carried to the backstop and called silence (LAB-48).  What changed is that
+    the line now names an anomaly instead of firing on every healthy juror."""
+    j = completing_run(lambda d: {"dispatch": {"status": "completed"},
+                                  "worker": {"state": "succeeded"}}, [])
+    prev = os.getcwd(); os.chdir(repo())
+    try:
+        j.PROGRESS["path"] = "p.jsonl"
+        out = j.collect({"d1": {"model": "v/alpha"}}, 600_000, "RUN")
+        rows = [json.loads(l) for l in open("p.jsonl")]
+    finally:
+        os.chdir(prev)
+    assert out["d1"]["result"] == "done" and out["d1"]["reconstructed"] is True, out
+    assert [r["kind"] for r in rows] == ["succeeded"], rows
+    assert f"{j.COMPLETION_GRACE_S}s" in rows[0]["message"], rows
+
+
+def test_a_completion_still_in_its_grace_at_the_backstop_is_settled_not_abandoned():
+    """The grace must never outlive the backstop.  Unclamped, a juror Orca had proved
+    finished — verdict on disk — came back `unsettled` and `returned: False`, and settle_all
+    then issued worker-stop against a dispatch that had already completed, which is what
+    test_a_completed_dispatch_is_never_stopped exists to prevent."""
+    j = completing_run(lambda d: {"dispatch": {"status": "completed"},
+                                  "worker": {"state": "succeeded"}}, [])
+    prev = os.getcwd(); os.chdir(repo())
+    try:
+        j.PROGRESS["path"] = "p.jsonl"
+        out = j.collect({"d1": {"model": "v/alpha"}}, 60_000, "RUN")
+    finally:
+        os.chdir(prev)
+    assert out["d1"]["result"] == "done", out
+    row = j.juror_row("v/alpha", "d1", out["d1"], {"parse_ok": True, "report": {}})
+    assert row["returned"] is True, row
+
+
+def test_a_worker_done_after_the_grace_corrects_the_record():
+    """A record the runner reconstructed is not evidence against the message that arrives
+    later.  Reachable while other jurors are still outstanding — which is the panel case,
+    since a run whose last dispatch settles ends the wait."""
+    late = {"messages": [done_message("d1", "late.json")], "deliveryId": "D1"}
+    j = completing_run(lambda d: ({"dispatch": {"status": "completed"},
+                                   "worker": {"state": "succeeded"}} if d == "d1"
+                                  else {"dispatch": {}, "worker": {"state": "ready"}}),
+                       [{"messages": [], "deliveryId": None},
+                        {"messages": [], "deliveryId": None},
+                        {"messages": [], "deliveryId": None},
+                        late,
+                        {"messages": [done_message("d2")], "deliveryId": "D2"}])
+    prev = os.getcwd(); os.chdir(repo())
+    try:
+        j.PROGRESS["path"] = "p.jsonl"
+        out = j.collect({"d1": {"model": "v/alpha"}, "d2": {"model": "v/beta"}},
+                        600_000, "RUN")
+        rows = [json.loads(l) for l in open("p.jsonl")]
+    finally:
+        os.chdir(prev)
+    assert out["d1"]["reportPath"] == "late.json", out
+    assert "reconstructed" not in out["d1"], "the message replaces the reconstruction"
+    kinds = [r["kind"] for r in rows]
+    assert kinds == ["succeeded", "returned", "returned"], rows
+    assert rows[1]["late"] is True and "1 of 2" in rows[1]["message"], rows
+    assert "2 of 2" in rows[2]["message"], "a corrected record is not counted twice"
 
 
 def main():

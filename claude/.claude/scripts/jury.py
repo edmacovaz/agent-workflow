@@ -85,6 +85,13 @@ WINDOW_MS = 60000
 # verdict to reach. The runner captures it and says so; the caller decides.
 STALE_HEARTBEAT_S = 300
 
+# Orca completes a dispatch *because* a valid worker_done arrived, so a dispatch reading
+# `succeeded` is notification that the message exists, not evidence in its own right. This
+# is how long the runner waits for it before writing the completion down itself. Without
+# the wait the two race, inspection wins whenever it happens to be mid-round, and the
+# message is then discarded unread — which is how a whole panel returned no count (LAB-58).
+COMPLETION_GRACE_S = 120
+
 # A backstop, not a stop rule. Orca treats 15-60 minutes as ordinary for real work, and
 # the old 7 minutes was a competing stop rule that reported working jurors as silent.
 DEFAULT_TIMEOUT_MS = 1800000
@@ -367,7 +374,7 @@ def resolve_unknown(dispatch, who, info):
         info.update(after)
         progress("succeeded", f"{who} — was outcome_unknown, stopped, and Orca reports it "
                  f"succeeded", state=after.get("state"))
-        return dict(info, result="done", outcome="succeeded",
+        return dict(info, result="done", outcome="succeeded", reconstructed=True,
                     note="revealed as succeeded by the stop; its worker_done was not "
                          "observed by this runner")
     if kind == "dead":
@@ -388,7 +395,11 @@ def handle_message(m, dispatches, settled, watch, seen):
     Keying off the payload alone settled it on anything carrying a dispatch id, and a
     `heartbeat` carries exactly the same taskId/dispatchId pair — which is how a juror that
     had sent nothing but a heartbeat was announced as returned while its task sat `ready`
-    and its report was never written (LAB-48)."""
+    and its report was never written (LAB-48).
+
+    The one exception is a `worker_done` for a record marked `reconstructed` — one the
+    runner built from Orca's state precisely because the message had not arrived. The
+    message outranks it and corrects it."""
     # a Delivery replays until it is acknowledged. `d in settled` guards only the types
     # that settle, so a replayed heartbeat emitted a duplicate line and a replayed question
     # was answered twice.
@@ -399,14 +410,22 @@ def handle_message(m, dispatches, settled, watch, seen):
         seen.add(mid)
     kind, p = m.get("type"), payload_of(m)
     d = p.get("dispatchId")
-    if d not in dispatches or d in settled:
+    if d not in dispatches:
+        return
+    # a settled dispatch is closed to everything but the one message that outranks how it
+    # was settled: a worker_done over a completion the runner reconstructed without it.
+    late = d in settled
+    if late and not (kind == "worker_done" and settled[d].get("reconstructed")):
         return
     who = model_of(dispatches[d]).split("/")[-1]
     if kind == "worker_done":
         settled[d] = {"result": "done", "type": kind, "outcome": p.get("outcome"),
                       "reportPath": p.get("reportPath"), "body": m.get("body")}
-        progress("returned", f"{who} reported done — {len(settled)} of {len(dispatches)}",
-                 model=model_of(dispatches[d]), outcome=p.get("outcome"))
+        progress("returned", f"{who} reported done — {len(settled)} of {len(dispatches)}"
+                 + (" (its message arrived after the runner wrote it down itself)"
+                    if late else ""),
+                 model=model_of(dispatches[d]), outcome=p.get("outcome"),
+                 late=late or None)
     elif kind == "escalation":
         settled[d] = {"result": "escalated", "type": kind, "body": m.get("body")}
         progress("escalated", f"NO REPORT from {who} — escalated",
@@ -429,11 +448,15 @@ def handle_message(m, dispatches, settled, watch, seen):
                  phase=p.get("phase"))
 
 
-def inspect_round(dispatches, settled, watch):
+def inspect_round(dispatches, settled, watch, deadline):
     """Ask Orca what every unsettled worker is doing, and say something only when the answer
     changed. Every line here costs the caller a Monitor wake, so silence between changes is
     deliberate — but a silence the caller cannot explain is what this replaces, and the
-    explanation is now the worker's own state rather than a countdown."""
+    explanation is now the worker's own state rather than a countdown.
+
+    `deadline` is the run's backstop, and it bounds the completion grace below: a wait that
+    outlived it would hand the caller `unsettled` for a juror Orca had proved finished, and
+    settle_all would then stop a dispatch that had already completed."""
     for d, meta in dispatches.items():
         if d in settled:
             continue
@@ -455,16 +478,25 @@ def inspect_round(dispatches, settled, watch):
         elif kind == "unknown":
             settled[d] = resolve_unknown(d, who, info)
         elif kind == "succeeded":
-            # the dispatch completed but no worker_done reached us. Reconcile it rather
-            # than carrying it to the backstop and calling it silence.
-            # Orca completes a dispatch *because* a valid worker_done arrived, so the
-            # message existed and was merely not observed here. Saying "no worker_done"
-            # beside returned=True is the self-contradiction LAB-48 is about.
+            # the dispatch completed, so its worker_done reached Orca and is on its way
+            # here. Wait for it rather than settling: the message carries the outcome, the
+            # report path and the juror's own summary, and a dispatch settled here is one
+            # the message can no longer be counted for.
+            now = time.monotonic()
+            seen_at = prev.get("completed_seen_at", now)
+            watch[d] = {**prev, **info, "completed_seen_at": seen_at}
+            if now - seen_at < COMPLETION_GRACE_S and now < deadline:
+                continue                     # not silence: a message known to be in flight
+            # it never came. Reconcile rather than carrying it to the backstop and calling
+            # it silence, but say that this is the runner's own reconstruction — which is
+            # what makes the line worth reading when it does appear.
             settled[d] = dict(info, result="done", outcome="succeeded",
-                              note="Orca reports the dispatch succeeded; its worker_done "
-                                   "was not observed by this runner")
-            progress("succeeded", f"{who} — Orca reports it succeeded (worker_done not "
-                     f"observed here)", model=model_of(meta), state=info.get("state"))
+                              reconstructed=True,
+                              note="Orca reports the dispatch succeeded; no worker_done "
+                                   f"arrived in the {COMPLETION_GRACE_S}s after")
+            progress("succeeded", f"{who} — Orca reports it succeeded, but no worker_done "
+                     f"arrived in {COMPLETION_GRACE_S}s", model=model_of(meta),
+                     state=info.get("state"))
         else:
             age = info.get("heartbeat_age")
             if age is not None and age >= STALE_HEARTBEAT_S and not prev.get("stale_reported"):
@@ -512,7 +544,7 @@ def collect(dispatches, timeout_ms, run):
             ack = r["deliveryId"]
         for m in r.get("messages") or []:
             handle_message(m, dispatches, settled, watch, seen)
-        inspect_round(dispatches, settled, watch)
+        inspect_round(dispatches, settled, watch, deadline)
     if ack:
         # a failed closing ack must not cost the verdicts already collected
         quietly("orchestration", "check", "--run", run, "--ack", ack)
@@ -658,6 +690,13 @@ def absence_reason(rec):
     if result == "done":
         return "reported done but wrote no report"
     state = rec.get("state")
+    if classify(rec) == "succeeded":
+        # Orca completed the dispatch and the message had not arrived; neither half is this
+        # runner's to assert without the other. Asked through classify so it cannot drift
+        # from the branch that produced the record — `completed` with `outcome_unknown` is
+        # a real state, and reading `state` alone called that one "still outcome_unknown".
+        return ("Orca reports the dispatch succeeded; its worker_done had not arrived "
+                "when the backstop expired")
     if state:
         line = f"still {state} when the backstop expired"
         age = rec.get("heartbeat_age")
@@ -667,7 +706,7 @@ def absence_reason(rec):
 
 # loop bookkeeping, never a caller-facing field. Everything else on a record reaches the
 # caller by default; hiding a field is a deliberate act.
-INTERNAL_FIELDS = {"stale_reported"}
+INTERNAL_FIELDS = {"stale_reported", "completed_seen_at"}
 
 
 def juror_row(model, dispatch, rec, report):
