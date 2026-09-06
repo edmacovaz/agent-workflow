@@ -14,7 +14,7 @@ Plan the work for a Linear issue before writing any code. The issue is the spec 
 Take the issue identifier from $ARGUMENTS; if it is empty, ask which issue rather than inferring one — the branch will not tell you (see gotchas). Fetch it via the Linear MCP and read the description, any linked documents, attachments, and comments. This is the spec.
 
 ### 2. Read before forming a view
-Read the files most likely relevant to the issue — don't guess from the title alone. Use Glob and Grep to find the actual code involved, and read AGENTS.md for the project's principles, code style, test strategy, and scope. Understand what exists before proposing what to change.
+Read the files most likely relevant to the issue — don't guess from the title alone. Use Glob and Grep to find the actual code involved, and read AGENTS.md for the project's principles, stack, test strategy, and scope. Understand what exists before proposing what to change.
 
 ### 3. Interview the user to a proposal — do not write any code yet
 Present the following in chat and discuss until you've converged:

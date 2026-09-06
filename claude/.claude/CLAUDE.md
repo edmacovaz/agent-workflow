@@ -12,7 +12,7 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 - **roadmap** — review and groom the backlog; shape and prioritise issues (builds on `write-issue`).
 - **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet. Read-only — no branch, no changes.
 - **start-work** — the gate between planning and coding: verify the worktree Orca created is for this issue, bring its base up to date, set it up (deps + secrets), orient, mark In Progress. Cuts nothing.
-- **code** — no skill of its own; the agreed plan + the project's AGENTS.md (principles, code style) + the built-in `/verify` and `/run` carry it.
+- **code** — no skill of its own; the agreed plan + the conventions below (comments, commit messages) + the project's AGENTS.md (principles, stack, test strategy) + the built-in `/verify` and `/run` carry it.
 - **review** — review the diff before shipping (the `review-changes` skill): judge it against the issue's intent, audit AGENTS.md conformance, and wrap the built-in `/code-review` / `/simplify`. Non-side-effecting, so run it in multiple passes.
 - **open-pr** — commit, push, open the PR, set the issue to In Review.
 - **merge-deploy-check** — merge, deploy, and confirm it works in production (closes the Definition of done).
@@ -40,6 +40,16 @@ Never install, add, upgrade or remove dependencies, or edit `package.json`, lock
 ## Keeping plans current
 
 When a plan, Linear issue, or other living document has gone out of date, ask to **correct the document itself** — rewrite the description/body so it matches the current reality. Don't default to bolting on a comment or appendix that leaves the stale plan in place. A comment records a discussion; the canonical description should always reflect the current plan. Suggest the rewrite, not the comment.
+
+## Comments
+
+Comments justify decisions; they don't describe code. If deleting one would cost the reader nothing but a paraphrase of the line beneath it, it shouldn't be there.
+
+- **Anchor it on the thing that needs justifying** — the constant, the branch, the ordering, the workaround. A comment floating over code that already reads plainly is noise.
+- **Say what forced the decision, not that one was made.** Cite the run, issue identifier, or failure behind it: `# ... which is how a whole panel returned no count (LAB-58)`. A comment naming its cause survives the next edit; one asserting a preference gets overwritten.
+- **Three lines is the cap.** Longer than that is a decision record, not a comment — it belongs on the Linear project, with the code carrying a one-line pointer to it.
+- **Never narrate.** No restating a signature (type it), no describing what a test asserts (name the test), no logging what changed (that's the commit message).
+- **A stale comment is worse than none.** Changing the code under a comment means correcting or deleting the comment, the same way a stale plan gets rewritten rather than annotated.
 
 ## Commit messages
 
