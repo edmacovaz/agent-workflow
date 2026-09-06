@@ -22,7 +22,7 @@ State a rule as an instruction in the step it governs. See `references/register.
 The description is the selection mechanism — it decides when the skill loads. Write it third-person, terse, and trigger-rich: **what it does + when to use it**, plus an exclusion clause if it's easily confused with a neighbour. Keep the *workflow* out.
 
 ### 5. Structure and budget
-Keep `SKILL.md` short — tighter still for frequently-loaded skills. Push depth (long references, edge cases, examples, schemas) into a `references/` directory and point to each file by path with a one-line "open this when…". Point into canonical sources rather than restating them.
+Keep the `SKILL.md` body under 500 lines — tighter still for a skill that loads into every conversation. Push depth (long references, edge cases, examples, schemas) into a `references/` directory and point to each file by path, imperatively, from the step that needs it. Point into canonical sources rather than restating them. See `references/best-practices.md` for the split triggers, and for why length is measured in lines rather than words.
 
 ### 6. Decide model invocation
 Leave the skill model-invocable by default so it triggers from the description. Set `disable-model-invocation: true` only for side-effecting or destructive skills that should run *only* when the user explicitly invokes them. Add `allowed-tools` only to scope what the skill may run.

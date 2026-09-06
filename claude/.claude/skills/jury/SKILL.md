@@ -29,7 +29,7 @@ grep -qxF '*' agents/in/.gitignore 2>/dev/null || printf '*\n' >> agents/in/.git
 
 Fetch the issue via the Linear MCP and write both files there as `<ISSUE>.artifact.md` and `<ISSUE>.intent.md`.
 
-**Plan mode.** The `## Plan` section is the artifact; Context and Outcome are the intent. No `## Plan` — or `## Steps` on older issues — means **stop and tell the caller**; do not invent one or fall back to the whole description. Standard: `plan`.
+**Plan mode.** The artifact is `## Plan` **up to the first** `### Iteration N` — that prefix is the current plan, and the iterations below it are the log of how it got there. Context and Outcome are the intent. No `## Plan` — or `## Steps` on older issues — means **stop and tell the caller**; do not invent one or fall back to the whole description. Standard: `plan`.
 
 **Diff mode.** Produce the artifact yourself: tracked changes, plus untracked files, which `git diff` omits and which are usually the point of a review. Base is `merge-base origin/HEAD HEAD` unless the caller supplied `since <ref>`, which overrides it.
 
@@ -46,7 +46,7 @@ Intent is what the work *should deliver*. A plan already on the issue is not int
 
 ## 3. Run the panel
 
-`Monitor` is deferred — fetch it with `ToolSearch` first. Choose a run id, `<ISSUE>-<YYYYmmdd-HHMMSS>`, and dispatch under it:
+`Monitor` is deferred — fetch it with `ToolSearch` first. Resolve the run id **before** dispatching: run `date +%Y%m%d-%H%M%S-$$` and prefix `<ISSUE>-`. Use that resolved literal as `<run>` in the command and every path below. Never pass `$RUN`, and never read the id back after dispatching — `jury.py` returns only once the panel has settled.
 
 ```
 python3 ~/.claude/scripts/jury.py --artifact <a> --intent <i> \
@@ -55,20 +55,9 @@ python3 ~/.claude/scripts/jury.py --artifact <a> --intent <i> \
 
 Then say what you started — `4 jurors dispatched`. **Offer no time.**
 
-**Monitor's events are a heartbeat, not a message.** It renders only its own description, never the line that woke it, so a wake means only *something changed, go and look* — yours is the only text the caller sees. On each wake, read the new lines of `agents/out/<run>.progress.jsonl` and report what they say. That file is how the runner's inspected state reaches the caller:
-
-```
-glm-5.3-flash returned — 1 of 4
-qwen3.7-plus — still reviewing, heartbeat 40s ago
-```
-
-Report state as it changes, not only reports as they land.
-
-`<run>.progress.jsonl` and `<run>.jury-result.json` both match `agents/out/<run>.*`, so glob with care: only `<run>.<artifact>.<model>.json` files are juror reports.
+**A Monitor wake means only *something changed, go and look*** — never what changed. On each wake, read the new lines of `agents/out/<run>.progress.jsonl` and report what they say; yours is the only text the caller sees. Report state as it changes, not only reports as they land. **A run must never produce zero output** — those lines are the entire progress report, with no polling and no narration between wakes. Follow `references/dispatch-mechanics.md` for the line format and for which `agents/out/<run>.*` files are juror reports.
 
 `<run>.jury-result.json` means the run has settled; read it and go to step 4. It is written even when the run crashes — but if Monitor exits and it never appears, the run died before it could write one. Report that; do not keep waiting.
-
-**A run must never produce zero output.** Those lines are the entire progress report — no polling and no narration between wakes.
 
 ## 4. Report back
 
