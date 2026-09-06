@@ -4,7 +4,7 @@ description: Plan the next iteration of work already under way, from review find
 disable-model-invocation: true
 ---
 
-Produces an `### Iteration N` section on the issue's `## Plan` — what the implementer builds from, and what a later review judges the diff against. Nothing is implemented until this iteration is recorded.
+Produces an `### Iteration N` section on the issue's `## Plan`, and brings that plan up to date — what the implementer builds from, and what a later review judges the diff against. Nothing is implemented until this iteration is recorded.
 
 ## 1. Verify
 
@@ -31,8 +31,29 @@ Re-read the issue's Outcome. Name any bullet the work has not delivered, and eit
 Put to the caller, and wait for an answer:
 
 - a feature whose findings keep accumulating — whether to keep it
-- any change to what was already agreed: an earlier iteration, an Outcome bullet, or a `Not in scope` entry
+- any change to what was already agreed: a statement in the canonical plan, an earlier iteration, an Outcome bullet, or a `Not in scope` entry
 
-## 6. Record
+Every change to what was already agreed is recorded under **Amendments** in step 7. A decision that changes nothing is recorded with the assumptions.
 
-Append `### Iteration N` under `## Plan`. Do not rewrite earlier iterations. Name the file for each item. Include assumptions and what is not being taken. Leave the issue's status unchanged.
+## 6. Bring the plan up to date
+
+Rewrite the statements this iteration supersedes — in `## Plan`, and in the Outcome or `Not in scope` where the caller agreed a change there — so the issue states what is now being built.
+
+Linear's description history is not reachable through the MCP. A superseded statement survives only where step 7 records it.
+
+## 7. Record
+
+Write the step 6 revision and `### Iteration N` in one `save_issue` call. Do not rewrite earlier iterations. Leave the issue's status unchanged.
+
+Open `## Plan` with one line stating that the section is the current plan and the iterations below record what changed.
+
+Open the iteration with a **From** line: the review it answers — jury run id and mode, the caller, or a self-check — and the plan version the reviewed diff was built from.
+
+Then two groups:
+
+- **Corrections** — the work did not match what was agreed.
+- **Amendments** — what was agreed moves. Each names what it supersedes — the `## Plan` statement, earlier iteration, Outcome bullet or `Not in scope` entry — how that now reads, and that the caller agreed it.
+
+Record an item that both corrects and amends as two items, one in each group. A Correction never supersedes an agreed statement; anything that does is an Amendment.
+
+Name the file for each item. Include assumptions and what is not being taken.
