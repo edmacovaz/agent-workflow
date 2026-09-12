@@ -169,6 +169,99 @@ def read_report(path):
     return row
 
 
+def excerpt(value, limit=200):
+    """Whatever a juror put where a field belonged, kept readable and bounded."""
+    try:
+        text = json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        text = str(value)
+    return text[:limit]
+
+
+# A wall named outside these is kept and counted as malformed, never dropped: the juror
+# still witnessed it, and this is telemetry about our own room (LAB-57).
+IMPEDIMENT_TOOLS = ("bash", "read", "skill", "webfetch", "other")
+IMPEDIMENT_KINDS = ("refused", "failed")
+
+
+def text_of(value):
+    """A field the juror may have left blank, normalised so absent and "" are one thing."""
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def attempts_of(entry):
+    """How many times the juror reached for it. Defaults to 1 rather than malforming the
+    entry: a juror that named the wall but miscounted still witnessed the wall."""
+    n = entry.get("attempts")
+    return n if isinstance(n, int) and not isinstance(n, bool) and n >= 1 else 1
+
+
+def read_impediments(report):
+    """The walls a juror hit, normalised for counting, and whether it answered at all.
+
+    Never raises and never rejects a report: `is_report` stays the only thing that can sink
+    a verdict, because a juror penalised for reporting a wall stops reporting them."""
+    if not isinstance(report, dict) or "impediments" not in report:
+        return [], False             # absent is a juror that did not answer, not an empty list
+    raw = report.get("impediments")
+    if not isinstance(raw, list):
+        return [{"malformed": excerpt(raw)}], True
+    entries = []
+    for e in raw:
+        if (isinstance(e, dict) and e.get("tool") in IMPEDIMENT_TOOLS
+                and e.get("kind") in IMPEDIMENT_KINDS
+                and isinstance(e.get("target"), str) and e["target"].strip()):
+            entries.append({"tool": e["tool"], "target": e["target"].strip(),
+                            "kind": e["kind"], "attempts": attempts_of(e),
+                            "refusal": text_of(e.get("refusal")),
+                            "purpose": text_of(e.get("purpose"))})
+        else:
+            entries.append({"malformed": excerpt(e)})
+    return entries, True
+
+
+def impediment_rollup(jurors):
+    """Walls this panel hit, grouped so one that recurs is countable rather than
+    reconstructed from transcripts.
+
+    Counts jurors, not calls — a juror retrying a refused command hit one wall. Only jurors
+    that left a verdict are read: an absent one said nothing about the room, and counting it
+    silent would blur "the room worked" into "nobody moved" (LAB-57)."""
+    walls, reported_by, silent, malformed, unexplained = {}, [], [], 0, 0
+    for j in jurors:
+        if not j.get("parse_ok"):
+            continue
+        entries, reported = read_impediments(j.get("report"))
+        (reported_by if reported else silent).append(j["model"])
+        for e in entries:
+            if "malformed" in e:
+                malformed += 1
+                continue
+            key = (e["tool"], e["target"], e["kind"])
+            wall = walls.setdefault(key, {"tool": e["tool"], "target": e["target"],
+                                          "kind": e["kind"], "count": 0, "attempts": 0,
+                                          "jurors": []})
+            if not e["refusal"]:
+                # counted, not dropped: a wall with no stated reason is still a wall, but it
+                # cannot be acted on from this file alone (LAB-57 review)
+                unexplained += 1
+            # `count` is jurors and `attempts` is calls: glm-5.3-flash retried a denied
+            # `git status` for 15 minutes on LAB-57-20260912-132045, which a juror count
+            # alone renders identical to hitting it once
+            wall["attempts"] += e["attempts"]
+            if j["model"] not in wall["jurors"]:
+                wall["jurors"].append(j["model"])
+                wall["count"] += 1
+    rollup = {"walls": sorted(walls.values(),
+                              key=lambda w: (-w["count"], w["tool"], w["target"], w["kind"])),
+              "reported_by": reported_by, "silent": silent}
+    if malformed:
+        rollup["malformed"] = malformed
+    if unexplained:
+        rollup["unexplained"] = unexplained
+    return rollup
+
+
 def salvage(out, run_id, artifact, models):
     """Recover verdicts a crashed run already collected. The settle file is the caller's
     only record, and a crash inside collect() would otherwise hand them an empty one
@@ -727,6 +820,9 @@ def juror_row(model, dispatch, rec, report):
         row.update(parse_ok=False, error=absence_reason(rec))
     else:
         row.update(report)
+        if row.get("parse_ok"):
+            # the juror's words stay nested under `report`; what the runner derives sits here
+            row["impediments_reported"] = read_impediments(report.get("report"))[1]
         if rec.get("result") != "done":
             row["unconfirmed"] = "report on disk, but no worker_done"
     row["returned"] = bool(rec.get("result") == "done" and row.get("parse_ok"))
@@ -860,9 +956,26 @@ def main():
                 if not j.get("parse_ok") and j["model"] not in dead:
                     progress("absent", f"NO REPORT from {j['model'].split('/')[-1]} — "
                              f"{j.get('error')}", model=j["model"])
+            impeded = impediment_rollup(jurors)
             results.append({"artifact": artifact, "seconds": round(time.monotonic() - started, 1),
                             "reported": len(reported), "confirmed": len(confirmed),
-                            "attempted": len(jurors), "jurors": jurors})
+                            "attempted": len(jurors), "impediments": impeded,
+                            "jurors": jurors})
+            # a wall is only knowable once a report lands, so this is the one point in the
+            # stream it can reach the caller
+            if impeded["reported_by"] or impeded["silent"]:
+                named = ", ".join(
+                    f"{w['tool']} {w['target']}"
+                    + (f" ×{w['attempts']}" if w["attempts"] > w["count"] else "")
+                    for w in impeded["walls"][:3])
+                progress("impeded",
+                         f"{name}: {len(impeded['walls'])} wall"
+                         f"{'s' * (len(impeded['walls']) != 1)} hit"
+                         + (f" — {named}" if named else "")
+                         + (f"; {len(impeded['silent'])} juror"
+                            f"{'s' * (len(impeded['silent']) != 1)} did not answer"
+                            if impeded["silent"] else ""),
+                         walls=len(impeded["walls"]))
             if not reported:
                 progress("no_verdict",
                          f"{name}: NO VERDICT — none of {len(jurors)} jurors reported")
@@ -889,7 +1002,9 @@ def main():
                 if rows:
                     payload["results"] = [{"artifact": args.artifact[0], "salvaged": True,
                                            "reported": len([r for r in rows if r["parse_ok"]]),
-                                           "attempted": len(rows), "jurors": rows}]
+                                           "attempted": len(rows),
+                                           "impediments": impediment_rollup(rows),
+                                           "jurors": rows}]
         try:
             os.makedirs(os.path.dirname(results_path) or ".", exist_ok=True)
             with open(results_path, "w") as fh:

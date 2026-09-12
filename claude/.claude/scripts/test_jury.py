@@ -1032,6 +1032,149 @@ def test_a_worker_done_after_the_grace_corrects_the_record():
     assert "2 of 2" in rows[2]["message"], "a corrected record is not counted twice"
 
 
+# --------------------------------------------------------------------- iteration 18
+def _report(impediments=None, verdict="pass"):
+    r = {"verdict": verdict, "findings": []}
+    if impediments is not None:
+        r["impediments"] = impediments
+    return r
+
+
+WALL = {"tool": "bash", "target": "git status", "kind": "refused",
+        "refusal": "denied by the bash allowlist", "purpose": "see what changed"}
+
+
+def test_a_malformed_impediment_never_costs_the_verdict():
+    """The loop asks its workers to report defects in the loop, which only holds while
+    reporting one is free.  A bad entry costs its own slot and nothing else — `is_report`
+    stays the only thing that can sink a verdict (LAB-57)."""
+    j = load()
+    report = _report([WALL, "not a dict", {"tool": "telepathy", "target": "x", "kind": "refused"}])
+    assert j.is_report(report), report
+
+    row = j.juror_row("v/alpha", "d1", {"result": "done", "outcome": "succeeded"},
+                      {"parse_ok": True, "report": report})
+    assert row["returned"] is True and row["report"]["verdict"] == "pass", row
+    assert row["impediments_reported"] is True, row
+
+    entries, reported = j.read_impediments(report)
+    assert reported and len(entries) == 3, entries
+    assert entries[0]["target"] == "git status", entries
+    assert "malformed" in entries[1] and "malformed" in entries[2], entries
+
+
+def test_a_juror_that_answered_nothing_is_not_one_that_hit_nothing():
+    """A panel where the room worked must not read like one where nobody moved, so an
+    absent field and an empty list are different answers (LAB-57)."""
+    j = load()
+    assert j.read_impediments(_report()) == ([], False)
+    assert j.read_impediments(_report([])) == ([], True)
+
+    jurors = [{"model": "v/quiet", "parse_ok": True, "report": _report()},
+              {"model": "v/clean", "parse_ok": True, "report": _report([])},
+              {"model": "v/absent", "parse_ok": False, "error": "escalated"}]
+    rollup = j.impediment_rollup(jurors)
+    assert rollup["silent"] == ["v/quiet"], rollup
+    assert rollup["reported_by"] == ["v/clean"], rollup
+    assert rollup["walls"] == [], rollup
+
+
+def test_a_recurring_wall_counts_jurors_not_calls():
+    """A wall the whole panel hit is the pattern worth seeing; one juror retrying a refused
+    command is still one wall, not three (LAB-57)."""
+    j = load()
+    retried = _report([WALL, dict(WALL), {"tool": "skill", "target": "orca-cli",
+                                          "kind": "refused", "refusal": "no such skill"}])
+    jurors = [{"model": "v/alpha", "parse_ok": True, "report": retried},
+              {"model": "v/bravo", "parse_ok": True, "report": _report([WALL])}]
+    walls = j.impediment_rollup(jurors)["walls"]
+    assert [(w["target"], w["count"]) for w in walls] == [("git status", 2), ("orca-cli", 1)], walls
+    assert walls[0]["jurors"] == ["v/alpha", "v/bravo"], walls
+
+
+def test_a_retry_loop_shows_in_attempts_not_in_the_wall_count():
+    """glm-5.3-flash retried a denied `git status` for fifteen minutes on
+    LAB-57-20260912-132045 and burned a dollar producing nothing.  Counting jurors keeps
+    that one wall; counting attempts is what tells it apart from hitting it once."""
+    j = load()
+    looped = _report([dict(WALL, attempts=412)])
+    steady = _report([dict(WALL, attempts=1)])
+    walls = j.impediment_rollup([
+        {"model": "v/looper", "parse_ok": True, "report": looped},
+        {"model": "v/steady", "parse_ok": True, "report": steady}])["walls"]
+    assert len(walls) == 1 and walls[0]["count"] == 2, walls
+    assert walls[0]["attempts"] == 413, walls
+
+    # a miscounted attempt never costs the wall it witnessed
+    for bad in (None, 0, "many", True, -3):
+        entries, _ = j.read_impediments(_report([dict(WALL, attempts=bad)]))
+        assert entries[0]["attempts"] == 1, (bad, entries)
+    assert j.read_impediments(_report([WALL]))[0][0]["attempts"] == 1
+
+
+def test_a_wall_with_no_stated_reason_is_counted_as_such():
+    """Recording what was attempted is half the outcome; a wall nobody said the reason for
+    cannot be acted on, so it is counted rather than passed off as complete (LAB-57 review)."""
+    j = load()
+    bare = {"tool": "read", "target": "~/.agents/skills/orca-cli", "kind": "refused"}
+    entries, _ = j.read_impediments(_report([bare, dict(WALL, refusal="   ")]))
+    assert [e["refusal"] for e in entries] == [None, None], entries
+
+    rollup = j.impediment_rollup([{"model": "v/alpha", "parse_ok": True,
+                                   "report": _report([bare, WALL])}])
+    assert rollup["unexplained"] == 1, rollup
+    assert len(rollup["walls"]) == 2, rollup
+    assert "unexplained" not in j.impediment_rollup(
+        [{"model": "v/alpha", "parse_ok": True, "report": _report([WALL])}])
+
+
+def test_a_failed_call_is_its_own_kind_of_wall():
+    """`refused` is the room saying no and `failed` is a permitted call breaking.  They key
+    apart so a juror's own bad command is never filed as a permission bug (LAB-57)."""
+    j = load()
+    broke = dict(WALL, kind="failed", refusal="fatal: not a git repository")
+    walls = j.impediment_rollup([{"model": "v/alpha", "parse_ok": True,
+                                  "report": _report([WALL, broke])}])["walls"]
+    assert sorted(w["kind"] for w in walls) == ["failed", "refused"], walls
+    assert all(w["count"] == 1 for w in walls), walls
+
+
+def test_an_impediments_field_that_is_not_a_list_is_kept_and_counted():
+    """The field is telemetry, so a juror that puts prose where the list belongs still gets
+    its verdict — and the maintainer still learns the schema was missed (LAB-57 review)."""
+    j = load()
+    report = _report("the room refused me twice")
+    assert j.is_report(report), report
+    entries, reported = j.read_impediments(report)
+    assert reported and len(entries) == 1 and "refused me twice" in entries[0]["malformed"]
+
+    rollup = j.impediment_rollup([{"model": "v/alpha", "parse_ok": True, "report": report}])
+    assert rollup["malformed"] == 1 and rollup["walls"] == [], rollup
+    assert rollup["reported_by"] == ["v/alpha"] and rollup["silent"] == [], rollup
+
+
+def test_the_settle_file_carries_the_panels_walls():
+    """The whole point is a record someone can compare across runs, so the roll-up has to
+    reach the file the caller reads rather than living in the progress stream (LAB-57)."""
+    j = load(); prev = os.getcwd(); os.chdir(repo())
+    try:
+        os.makedirs("out")
+        j.check_models = lambda m: None
+        j.collect = lambda e, t, r: {"d1": {"result": "done", "type": "worker_done",
+                                            "outcome": "succeeded", "reportPath": None}}
+        j.orca = stub_orca(on_start=lambda: open("out/W.a.alpha.json", "w").write(
+            json.dumps(_report([WALL]))))
+        sys.argv = argv(run_id="W", out="out", models="m/alpha")
+        j.main()
+        result = json.load(open("out/W.jury-result.json"))["results"][0]
+        assert result["impediments"]["walls"][0]["target"] == "git status", result
+        assert result["impediments"]["reported_by"] == ["m/alpha"], result
+        assert result["jurors"][0]["impediments_reported"] is True, result
+        assert result["reported"] == 1 and result["confirmed"] == 1, result
+    finally:
+        os.chdir(prev)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = []
