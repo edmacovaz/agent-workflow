@@ -4,3 +4,8 @@
 
 # tool backups (e.g. Orca backing up settings.json before writing)
 *.bak
+
+# opencode's project-local agent overrides. AGENTS.md has you drop a juror.md copy here to
+# test an edit against the real agent; committing one would pin every juror in every clone
+# to that snapshot, since opencode prefers it over ~/.config/opencode/agents/ (LAB-65).
+/.opencode/

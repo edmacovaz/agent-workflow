@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
-"""Dispatch a panel of opencode jurors through Orca orchestration and collect verdicts.
+"""Run a panel of opencode jurors over an artifact and collect their verdicts.
 
-Each juror is a long-lived terminal pinned to one model, re-engaged with a fresh
-Dispatch per artifact rather than rebuilt. Deliveries are acknowledged as they are
-processed: an unacknowledged batch replays on the next check and is indistinguishable
-from a fresh result, which would let a stale verdict pass for a current one.
+Each juror is a bounded `opencode run` pinned to one model: it starts, reviews, writes its
+report and exits, so completion is the exit and absence is a process fact. Its own event
+stream says what it is doing while it works. The deadline is the only thing that stops one —
+a second stop rule racing it is how working jurors came to be reported as silent (LAB-65).
 
-Orca owns placement, state and stop rules; this runner owns none of them. It asks what
-each worker is doing and passes the answer through — it does not decide from a clock that
-a worker is finished, and it does not read a transcript to decide whether one is stuck.
+`--mode tui` keeps the path this replaced, where jurors were long-lived terminals dispatched
+through Orca and settled from the messages they sent back. It is the migration's control and
+LAB-66 removes it.
 """
-import argparse, datetime, json, os, shutil, subprocess, sys, time
+import argparse, datetime, json, os, shutil, signal, subprocess, sys, time
 
 
 def event(msg):
-    """Wake the caller. Monitor renders only its own description, never these lines, so a
-    wake means only "something changed, go and look".
+    """Say one thing to the caller. Run the panel as the Monitor command and this line is what
+    the caller sees, verbatim — measured 12 Sep 2026, against a long-standing belief that only
+    Monitor's own description ever reached them (LAB-65).
 
-    What changed is no longer only the reports directory: progress() routes heartbeat,
-    state-change, stale and question lines through here too, and none of those is a
-    file appearing. The rule is one line per change and nothing between changes — a wake
-    the caller cannot account for is the silence this replaced."""
+    The rule is one line per change and nothing between changes: a line the caller cannot
+    account for is the noise, and no line at all is the silence this replaced."""
     print(msg, flush=True)
 
 
@@ -33,11 +32,10 @@ def progress(kind, message, **fields):
     """One caller-facing line: printed to wake Monitor, and appended to the run's progress
     file so that *what* changed can actually reach the caller.
 
-    Monitor renders only its own description, so a wake says "something changed" and no
-    more. Before this, the only thing a waiting caller could see was which report files had
-    appeared — never that a juror was alive and working, which is the one thing they are
-    waiting to know. Iteration 1 removed the false "time remains" signal without adding the
-    true one.
+    Before this, the only thing a waiting caller could see was which report files had appeared —
+    never that a juror was alive and working, which is the one thing they are waiting to know.
+    Iteration 1 removed the false "time remains" signal without adding the true one. The file is
+    the record; stdout is the channel, and a run that only writes the file goes silent.
 
     Flushed per line: a buffered write would leave the caller watching an empty file until
     the run ended, which is the silence this replaces. A progress line is never worth ending
@@ -74,8 +72,18 @@ SPEC = ("Review the artifact at {artifact} against the intent at {intent}. Both 
         "worktree; read them, and read any repository files needed to check the artifact's claims. "
         "Judge fit against the intent, and form against the `{standard}` standard — load it with the "
         "skill tool and judge against what it actually says. Label every finding with its dimension. "
-        "Write your findings JSON to {report}, then report worker_done with --outcome succeeded and "
-        "--report-path {report}")
+        "Write your findings JSON to {report}")
+
+# The Orca lifecycle is dispatch mechanics, not juror identity, so it rides on the spec of the
+# mode that has a Run to talk to rather than on juror.md. A headless juror given these spent 5
+# attempts on `orca orchestration send`, every one rejected `run_required` (LAB-65).
+TUI_SPEC = SPEC + (", then report worker_done with --outcome succeeded and --report-path {report}. "
+                   "Send a heartbeat as you change phase — once when you begin reading, once when "
+                   "you begin checking the artifact's claims against the repository, and once when "
+                   "you begin writing — including both ids and omitting --to, so Orca routes it to "
+                   "the owning Run. Three across a review, not one every thirty seconds. If you "
+                   "cannot complete the review, send an escalation saying why rather than stopping "
+                   "silently.")
 
 # One wait window. Inspection happens between windows, so this is how long the runner can
 # go without asking Orca anything — not how long a juror is allowed to take.
@@ -95,6 +103,16 @@ COMPLETION_GRACE_S = 120
 # A backstop, not a stop rule. Orca treats 15-60 minutes as ordinary for real work, and
 # the old 7 minutes was a competing stop rule that reported working jurors as silent.
 DEFAULT_TIMEOUT_MS = 1800000
+
+# Bounds how stale a progress line can be, and nothing else. Named apart from the backstop
+# because a second thing that decides when a juror is done is how the old seven-minute cutoff
+# came to report working jurors as silent — see DEFAULT_TIMEOUT_MS.
+POLL_S = 5
+
+# How often a juror still running is reported on. Long enough that the whole panel's chatter
+# does not bury the reports it sits among, short enough that a caller is never left wondering.
+REPORT_EVERY_S = 60
+
 
 # A juror blocked on `ask` waits for a coordinator that is a script and cannot answer it.
 # Saying so costs one message; leaving it blocked costs the whole backstop.
@@ -275,18 +293,22 @@ def salvage(out, run_id, artifact, models):
     return rows
 
 
-def check_models(models):
-    """An unresolvable model id does not fail the dispatch — opencode falls back to the
-    agent's declared model and the panel quietly becomes that model twice. Five runs went
-    by before a juror's own session gave it away, so the ids are checked before spending."""
-    # homebrew's bin is missing from PATH in some Claude Code sessions, and a lookup that
-    # fails here would abort every run rather than the bad ones
+def opencode_exe():
+    """homebrew's bin is missing from PATH in some Claude Code sessions, so `which` alone would
+    abort every run rather than the bad ones."""
     exe = shutil.which("opencode") or next(
         (c for c in ("/opt/homebrew/bin/opencode", "/usr/local/bin/opencode",
                      os.path.expanduser("~/.opencode/bin/opencode")) if os.path.exists(c)), None)
     if not exe:
-        raise RuntimeError("cannot find the opencode binary; cannot verify juror models")
-    proc = subprocess.run([exe, "models"], capture_output=True, text=True, timeout=120)
+        raise RuntimeError("cannot find the opencode binary")
+    return exe
+
+
+def check_models(models):
+    """An unresolvable model id does not fail the dispatch — opencode falls back to the
+    agent's declared model and the panel quietly becomes that model twice. Five runs went
+    by before a juror's own session gave it away, so the ids are checked before spending."""
+    proc = subprocess.run([opencode_exe(), "models"], capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
         # else an empty stdout blames every model for the command having failed
         raise RuntimeError(f"`opencode models` failed: {proc.stderr[-300:]}")
@@ -829,6 +851,299 @@ def juror_row(model, dispatch, rec, report):
     return row
 
 
+def observed(events_path):
+    """What a juror has actually done, read from its live event stream: its last tool call and
+    how many times that same call has already been made.
+
+    Observation, not inference. The supervision this replaces had only heartbeats, log offsets
+    and Orca's dispatch state to guess liveness from, because a TUI offered nothing else; a
+    juror's own event stream says what it did.
+
+    **This function may not raise.** An escape reaches the wait loop, whose finally kills every
+    juror — a status line destroying the panel it was reporting on. Returns None instead, both
+    for an unreadable stream and for a juror that has yet to call anything."""
+    last, counts = None, {}
+    try:
+        # errors="replace" and ValueError below: EOF lands mid-character while the juror is
+        # still writing, and UnicodeDecodeError is a ValueError — see this function's contract
+        # above for why an escape from here is fatal (LAB-65)
+        with open(events_path, errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                    part = ev.get("part") or {}
+                    if part.get("type") != "tool":
+                        continue
+                    got = part.get("state") or {}
+                    arg = got.get("input") if isinstance(got.get("input"), dict) else {}
+                    # the whole target, never the rendered one, and every key a tool uses to
+                    # name it: truncating collapsed six files into one, and a missing key made
+                    # two different calls look like one repeated (LAB-65 review)
+                    key = (part.get("tool") or "?",
+                           str(arg.get("command") or arg.get("filePath") or arg.get("pattern")
+                               or arg.get("path") or arg.get("name") or arg.get("patchText")
+                               or ""))
+                except Exception:
+                    # every shape in this stream is a third party's, and the last line is
+                    # routinely torn; this function may not raise on any of them
+                    continue
+                counts[key] = counts.get(key, 0) + 1
+                last = key
+    except (OSError, ValueError):
+        return None
+    if last is None:
+        return None
+    return {"tool": last[0], "target": last[1], "repeats": counts[last]}
+
+
+def shorten(target, limit=60):
+    """A target the caller can actually identify. Absolute paths in a worktree share a ~48-char
+    prefix, so truncating the raw string reported the directory and never the file (LAB-65
+    review). Relative first, then trim — which also keeps a command's name, at its front."""
+    here = os.getcwd() + os.sep
+    if target.startswith(here):
+        target = target[len(here):]
+    target = " ".join(target.split())
+    return target if len(target) <= limit else target[:limit - 1] + "…"
+
+
+def working_line(model, juror, now):
+    """One line about a juror that has not finished. Reports what it is doing and whether it is
+    doing it again — repetition is strong evidence of a loop, where silence is not evidence of
+    anything: three minutes without an event is also what one long model call looks like from
+    out here. Treating silence as a signal is the mistake that reported working jurors as dead
+    (LAB-50), so a quiet juror is reported as quiet and never as stuck."""
+    short, secs = model.split("/")[-1], int(now - juror["started"])
+    seen = observed(juror["events"])
+    if seen is None:
+        return f"{short} — running {secs}s, nothing called yet"
+    line = f"{short} — running {secs}s, last {seen['tool']} {shorten(seen['target'])}".rstrip()
+    # no target means no way to tell two calls apart, so ×N would assert a repetition nobody
+    # saw — true for any tool whose target key we have not met, not just the known ones
+    return line + (f" (×{seen['repeats']})" if seen["repeats"] > 1 and seen["target"] else "")
+
+
+def stream_dir(run_id):
+    """Where a juror's event and stderr streams go — outside the worktree, deliberately.
+
+    A juror may read anything inside the worktree, so streams kept beside the reports let one
+    juror read another's whole reasoning as it forms, and a juror reached for exactly that
+    during the LAB-65 panel. The agent's own `external_directory: deny` is the only thing that
+    can stop it, and it only binds outside the worktree. Kept rather than temped: they are the
+    forensics that replaced session exports."""
+    path = os.path.join(os.path.expanduser("~/.cache/jury"), run_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def launch_juror(exe, model, spec, report, root, streams, run_id, name):
+    """Start one juror as a bounded process.
+
+    stdout goes to a file rather than a pipe on purpose: a piped run killed at its deadline came
+    back with nothing at all, and the file is also what lets progress be read while the juror is
+    still working, which is what replaced the heartbeats (LAB-65)."""
+    short = model.split("/")[-1]
+    # `name` is in here for the same reason report_path carries it: a run with two artifacts
+    # reuses the run id, and without it the second artifact truncates the first's streams
+    stem = f"{streams}/{run_id}.{name}.{short}"
+    events, errs = f"{stem}.events.jsonl", f"{stem}.stderr.txt"
+    handles = []
+    try:
+        handles.append(open(events, "w"))   # one at a time: a tuple left the first of them
+        handles.append(open(errs, "w"))     # open and unreferenced when the second raised
+        proc = subprocess.Popen(
+            [exe, "run", "--agent", "juror", "-m", model, "--auto", "--format", "json",
+             "--print-logs", "--dir", root, spec],
+            cwd=root, stdout=handles[0], stderr=handles[1], stdin=subprocess.DEVNULL)
+    except Exception:
+        for fh in handles:
+            fh.close()
+        raise
+    handles = tuple(handles)
+    return {"model": model, "proc": proc, "report": report, "events": events,
+            "stderr": errs, "handles": handles, "started": time.monotonic()}
+
+
+def stderr_tail(path, limit=300):
+    """Why a juror exited non-zero, in its own words. Bounded: a crash can print a great deal."""
+    try:
+        with open(path, errors="replace") as fh:
+            return drop_keepalives(fh.read())[-limit:]
+    except (OSError, ValueError):
+        return ""
+
+
+def join_reasons(*parts):
+    """Every reason a row has, in order, none of them lost."""
+    return "; ".join(p for p in parts if p)
+
+
+def headless_row(juror, rc, killed=False, why=None):
+    """One juror, settled from process facts alone.
+
+    `returned` is the process exiting cleanly and `parse_ok` is a verdict being on disk — the
+    same two halves the TUI path reconciles from a worker_done and a file, so `confirmed` and
+    `reported` keep meaning what the skill already says they mean. Nothing here is inferred:
+    each branch is something the operating system told us."""
+    for fh in juror["handles"]:
+        try:
+            fh.close()
+        except OSError:
+            pass
+    row = {"model": juror["model"], "returned": False, "parse_ok": False,
+           "seconds": round(time.monotonic() - juror["started"], 1)}
+    report = read_report(juror["report"])
+    if report:
+        row.update(report)
+    # appended, never replaced: read_report may already have said the verdict is unreadable,
+    # and that a malformed one exists is a different fact from how the process ended
+    said = row.get("error")
+    if killed:
+        row["error"] = join_reasons(
+            said, why or f"killed at the {int(row['seconds'])}s timeout")
+        return row
+    row["exit"] = rc
+    if rc != 0:
+        tail = stderr_tail(juror["stderr"])
+        row["error"] = join_reasons(said, f"exited {rc}" + (f": {tail}" if tail else ""))
+        return row
+    row["returned"] = True
+    if not row["parse_ok"] and "error" not in row:
+        row["error"] = "exited cleanly but wrote no report"
+    return row
+
+
+def headless_line(row, done=None, total=None):
+    """What to tell the caller about a settled juror.
+
+    Derived from the row rather than from the branch that produced it, so the stream and the
+    settle file can never say opposite things: a juror killed after writing a good verdict was
+    announced as NO REPORT while being counted in `reported` (LAB-65 review)."""
+    short, secs = row["model"].split("/")[-1], int(row["seconds"])
+    tally = f" — {done} of {total}" if done and total else ""
+    if row["parse_ok"] and row["returned"]:
+        return "returned", f"{short} returned in {secs}s{tally}"
+    if row["parse_ok"]:
+        return "returned", f"{short} wrote a verdict but {row['error']}{tally}"
+    return "absent", f"NO REPORT from {short} — {row.get('error')}"
+
+
+def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_ms, results):
+    """Fan four bounded calls out and wait on them. No Orca: the spec is argv, placement is
+    --dir, and the exit is the completion, so there is nothing to place, observe or settle.
+
+    The deadline is the only stop rule. Everything read from the event streams is reported and
+    never acted on — a second stop rule racing this one is how the old seven-minute cutoff came
+    to report working jurors as silent (see DEFAULT_TIMEOUT_MS)."""
+    exe = opencode_exe()
+    streams = stream_dir(run_id)
+    name = os.path.basename(artifact).replace(".md", "")
+    started = time.monotonic()
+    deadline = started + timeout_ms / 1000.0
+
+    jurors, pending = [], []      # passed into the wait rather than returned from it, so a
+                                  # raise there still leaves every settled row in the caller's
+                                  # hands
+    for model in models:
+        report = report_path(out, run_id, name, model)
+        if os.path.exists(report):
+            os.remove(report)               # else a stale verdict passes for a fresh one
+        try:
+            spec = SPEC.format(artifact=artifact, intent=intent, standard=standard,
+                               report=report)
+            pending.append(launch_juror(exe, model, spec, report, root, streams, run_id,
+                                        name))
+        except Exception as exc:
+            jurors.append({"model": model, "returned": False, "parse_ok": False,
+                           "error": f"launch failed: {exc}"})
+            progress("launch_failed",
+                     f"NO REPORT from {model.split('/')[-1]} — launch failed", model=model)
+    if pending:
+        progress("dispatched", f"{len(pending)} juror{'s' * (len(pending) != 1)} dispatched")
+
+    spoke = time.monotonic()
+    try:
+        wait_out(jurors, pending, deadline, spoke, len(models))
+    finally:
+        # every juror dispatched gets a row and every child gets killed, however the wait
+        # ended: a result that omits them reads as a smaller panel that did better than it did.
+        # Reached on SIGTERM only because main installs a handler; a SIGKILL still leaks
+        for juror in pending:
+            if juror["proc"].poll() is None:
+                juror["proc"].kill()
+                juror["proc"].wait()    # reaped before anything is recorded, so a dying juror
+                                        # cannot still be writing the report we then read
+            row = headless_row(juror, None, killed=True,
+                               why="the run stopped before it finished")
+            jurors.append(row)
+            progress(*headless_line(row), model=juror["model"])
+        reported = [j for j in jurors if j.get("parse_ok")]
+        impeded = impediment_rollup(jurors)
+        results.append({"artifact": artifact,
+                        "seconds": round(time.monotonic() - started, 1),
+                        "reported": len(reported),
+                        "confirmed": len([j for j in jurors if j["returned"]]),
+                        "attempted": len(jurors), "impediments": impeded, "jurors": jurors})
+        announce_walls(name, impeded, len(jurors), reported)
+
+
+def wait_out(jurors, pending, deadline, spoke, total=None):
+    """Wait on the jurors, appending each into `jurors` as its process ends. The deadline is the
+    only stop rule; everything read from an event stream is reported and never acted on.
+
+    Appends rather than returns so that a raise — a SIGTERM turned into an exit, say — leaves
+    the caller holding every row settled so far."""
+    while pending:
+        time.sleep(POLL_S)
+        now, still = time.monotonic(), []
+        for juror in list(pending):
+            rc = juror["proc"].poll()
+            if rc is None and now < deadline:
+                still.append(juror)
+                continue
+            if rc is None:
+                juror["proc"].kill()
+                juror["proc"].wait()
+                row = headless_row(juror, None, killed=True)
+            else:
+                row = headless_row(juror, rc)
+            kind, line = headless_line(
+                row, len([j for j in jurors if j.get("parse_ok")]) + bool(row["parse_ok"]),
+                total)
+            progress("timeout" if rc is None and not row["parse_ok"] else kind, line,
+                     model=juror["model"])
+            jurors.append(row)
+        pending[:] = still
+        if pending and now - spoke >= REPORT_EVERY_S:
+            for juror in pending:
+                progress("working", working_line(juror["model"], juror, now),
+                         model=juror["model"])
+            spoke = now
+
+
+def announce_walls(name, impeded, attempted, reported):
+    """A wall is only knowable once a report lands, so this is the one point in the stream it
+    can reach the caller. Shared by both modes so they cannot drift into saying it differently."""
+    if impeded["reported_by"] or impeded["silent"]:
+        named = ", ".join(
+            f"{w['tool']} {w['target']}"
+            + (f" ×{w['attempts']}" if w["attempts"] > w["count"] else "")
+            for w in impeded["walls"][:3])
+        progress("impeded",
+                 f"{name}: {len(impeded['walls'])} wall"
+                 f"{'s' * (len(impeded['walls']) != 1)} hit"
+                 + (f" — {named}" if named else "")
+                 + (f"; {len(impeded['silent'])} juror"
+                    f"{'s' * (len(impeded['silent']) != 1)} did not answer"
+                    if impeded["silent"] else ""),
+                 walls=len(impeded["walls"]))
+    if not reported:
+        progress("no_verdict", f"{name}: NO VERDICT — none of {attempted} jurors reported")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--artifact", action="append", required=True,
@@ -838,6 +1153,9 @@ def main():
     ap.add_argument("--standard", required=True,
                     help="skill name the juror loads to judge form, e.g. plan or review-changes")
     ap.add_argument("--models", nargs="*", default=PANEL)
+    ap.add_argument("--mode", choices=("headless", "tui"), default="headless",
+                    help="headless runs each juror as a bounded `opencode run`; tui is the "
+                         "Orca-dispatched path it replaces, kept as this migration's control")
     ap.add_argument("--out", default="agents/out",
                     help="directory jurors write reports into")
     ap.add_argument("--run-id", help="prefixes this run's reports and handles; "
@@ -846,8 +1164,13 @@ def main():
                     help="backstop, not a budget: inspection ends the wait, this only bounds it")
     ap.add_argument("--results", help="defaults to <out>/<run-id>.jury-result.json")
     ap.add_argument("--objective", default="jury review",
-                    help="Orca Run objective; name the issue under review")
+                    help="tui mode only: the Orca Run objective. Headless creates no Run, so "
+                         "this is inert there")
     args = ap.parse_args()
+    # SIGTERM kills a process outright, running no finally, so the jurors would outlive a
+    # runner stopped by its watcher. Turning it into an exit is what lets every finally in this
+    # run — the juror cleanup and the settle file — happen at all (LAB-65)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit("terminated"))
     if len(args.artifact) != len(args.intent):
         sys.exit("--artifact and --intent must be given the same number of times")
 
@@ -874,111 +1197,102 @@ def main():
         # everything that can raise belongs inside: the caller waits on the settle file the
         # finally writes, so anything failing before it leaves them waiting forever
         ensure_ignored(args.out)     # jurors write here, and the caller watches it
-        reclaim_orphans(os.path.join(args.out, STATE_DIR), state)   # before run-create: it rebinds
-        check_models(args.models)
-        worktree = resolve_worktree(root)
-        run = orca("orchestration", "run-create", "--objective", args.objective)["run"]["id"]
+        check_models(args.models)    # an unresolvable id degrades the panel silently, either mode
+        if args.mode == "headless":
+            for artifact, intent in zip(args.artifact, args.intent):
+                run_headless(args.models, artifact, intent, args.standard,
+                             args.out, run_id, root, args.timeout_ms, results)
+        else:
+            # tui-only of necessity: settle_abandoned_run's `run-use` rebinds the caller's
+            # coordinator terminal, safe only because run-create follows it here. Headless
+            # fenced the calling session against a dead Run; LAB-66 deletes both (LAB-65)
+            reclaim_orphans(os.path.join(args.out, STATE_DIR), state)  # before run-create: it rebinds
+            worktree = resolve_worktree(root)
+            run = orca("orchestration", "run-create", "--objective", args.objective)["run"]["id"]
 
-        boot_failed = {}
-        for model in args.models:
-            try:
-                h = orca("terminal", "create", "--worktree", worktree,
-                         "--title", f"juror {model.split('/')[-1]}",
-                         "--command", f"opencode --agent juror -m {model}")["terminal"]["handle"]
-                terminals[model] = h
-                # before the wait: a boot that times out has still created a terminal
-                record_handles(state, terminals.values(), run, records)
-                orca("terminal", "wait", "--terminal", h, "--for", "tui-idle",
-                     "--timeout-ms", "120000", timeout=180)
-                ready[model] = h
-            except Exception as exc:
-                # one juror that will not boot is an absentee, not the end of the panel
-                boot_failed[model] = f"boot failed: {exc}"
-                progress("boot_failed", f"NO REPORT from {model.split('/')[-1]} — boot "
-                         f"failed", model=model)
-
-        for artifact, intent in zip(args.artifact, args.intent):
-            name = os.path.basename(artifact).replace(".md", "")
-            started, dispatches, dead = time.monotonic(), {}, dict(boot_failed)
-            for model, handle in ready.items():
-                report = report_path(args.out, run_id, name, model)
-                if os.path.exists(report):
-                    os.remove(report)            # else a stale verdict passes for a fresh one
+            boot_failed = {}
+            for model in args.models:
                 try:
-                    task = orca("orchestration", "task-create", "--task-title", f"jury {name} {model}",
-                                "--spec", SPEC.format(artifact=artifact, intent=intent, report=report,
-                                                      standard=args.standard))["task"]["id"]
-                    d = orca("orchestration", "worker-start", "--task", task,
-                             "--worktree", worktree,
-                             "--terminal", handle)["dispatchId"]
+                    h = orca("terminal", "create", "--worktree", worktree,
+                             "--title", f"juror {model.split('/')[-1]}",
+                             "--command", f"opencode --agent juror -m {model}")["terminal"]["handle"]
+                    terminals[model] = h
+                    # before the wait: a boot that times out has still created a terminal
+                    record_handles(state, terminals.values(), run, records)
+                    orca("terminal", "wait", "--terminal", h, "--for", "tui-idle",
+                         "--timeout-ms", "120000", timeout=180)
+                    ready[model] = h
                 except Exception as exc:
-                    dead[model] = f"dispatch failed: {exc}"
-                    progress("dispatch_failed", f"NO REPORT from "
-                             f"{model.split('/')[-1]} — dispatch failed", model=model)
-                    continue
-                dispatches[d] = {"model": model, "report": report, "task": task,
-                                 "handle": handle}
-                # registered here, not after collect returns: a crash inside collect() left
-                # these unknown to settle_all, and the finally closed their terminals
-                # anyway — manufacturing the `terminal_missing` this change exists to
-                # remove, on the one path most likely to hit it
-                records[d] = {"result": "unsettled"}
-                # written before the wait, so a crash here still leaves a later run enough
-                # to settle these records
-                # `records` holds every dispatch from the moment it is created, retries
-                # included, so concatenating `dispatches` only listed each one twice
-                record_handles(state, terminals.values(), run, records)
-            if dispatches:
-                progress("dispatched", f"{len(dispatches)} "
-                         f"juror{'s' * (len(dispatches) != 1)} dispatched")
+                    # one juror that will not boot is an absentee, not the end of the panel
+                    boot_failed[model] = f"boot failed: {exc}"
+                    progress("boot_failed", f"NO REPORT from {model.split('/')[-1]} — boot "
+                             f"failed", model=model)
 
-            settled = collect(dispatches, args.timeout_ms, run)
-            records.update(settled)
+            for artifact, intent in zip(args.artifact, args.intent):
+                name = os.path.basename(artifact).replace(".md", "")
+                started, dispatches, dead = time.monotonic(), {}, dict(boot_failed)
+                for model, handle in ready.items():
+                    report = report_path(args.out, run_id, name, model)
+                    if os.path.exists(report):
+                        os.remove(report)            # else a stale verdict passes for a fresh one
+                    try:
+                        task = orca("orchestration", "task-create", "--task-title", f"jury {name} {model}",
+                                    "--spec", TUI_SPEC.format(artifact=artifact, intent=intent, report=report,
+                                                              standard=args.standard))["task"]["id"]
+                        d = orca("orchestration", "worker-start", "--task", task,
+                                 "--worktree", worktree,
+                                 "--terminal", handle)["dispatchId"]
+                    except Exception as exc:
+                        dead[model] = f"dispatch failed: {exc}"
+                        progress("dispatch_failed", f"NO REPORT from "
+                                 f"{model.split('/')[-1]} — dispatch failed", model=model)
+                        continue
+                    dispatches[d] = {"model": model, "report": report, "task": task,
+                                     "handle": handle}
+                    # registered here, not after collect returns: a crash inside collect() left
+                    # these unknown to settle_all, and the finally closed their terminals
+                    # anyway — manufacturing the `terminal_missing` this change exists to
+                    # remove, on the one path most likely to hit it
+                    records[d] = {"result": "unsettled"}
+                    # written before the wait, so a crash here still leaves a later run enough
+                    # to settle these records
+                    # `records` holds every dispatch from the moment it is created, retries
+                    # included, so concatenating `dispatches` only listed each one twice
+                    record_handles(state, terminals.values(), run, records)
+                if dispatches:
+                    progress("dispatched", f"{len(dispatches)} "
+                             f"juror{'s' * (len(dispatches) != 1)} dispatched")
 
-            jurors = [{"model": m, "returned": False, "parse_ok": False, "error": err}
-                      for m, err in dead.items()]
-            for d, meta in dispatches.items():
-                row = juror_row(meta["model"], d, settled.get(d) or {"result": "unsettled"},
-                                read_report(meta["report"]))
-                rows[d] = row              # settle_all runs later and fills in its release
-                jurors.append(row)
-            # a juror Orca proved dead cannot serve the next artifact
-            returned = {j["model"] for j in jurors if j.get("returned")}
-            for d, meta in dispatches.items():
-                rec = settled.get(d) or {}
-                if rec.get("result") in ("failed", "abandoned") and meta["model"] not in returned:
-                    ready.pop(meta["model"], None)
-                    boot_failed.setdefault(meta["model"], absence_reason(rec))
+                settled = collect(dispatches, args.timeout_ms, run)
+                records.update(settled)
 
-            reported = [j for j in jurors if j.get("parse_ok")]
-            confirmed = [j for j in jurors if j.get("returned")]
-            for j in jurors:
-                if not j.get("parse_ok") and j["model"] not in dead:
-                    progress("absent", f"NO REPORT from {j['model'].split('/')[-1]} — "
-                             f"{j.get('error')}", model=j["model"])
-            impeded = impediment_rollup(jurors)
-            results.append({"artifact": artifact, "seconds": round(time.monotonic() - started, 1),
-                            "reported": len(reported), "confirmed": len(confirmed),
-                            "attempted": len(jurors), "impediments": impeded,
-                            "jurors": jurors})
-            # a wall is only knowable once a report lands, so this is the one point in the
-            # stream it can reach the caller
-            if impeded["reported_by"] or impeded["silent"]:
-                named = ", ".join(
-                    f"{w['tool']} {w['target']}"
-                    + (f" ×{w['attempts']}" if w["attempts"] > w["count"] else "")
-                    for w in impeded["walls"][:3])
-                progress("impeded",
-                         f"{name}: {len(impeded['walls'])} wall"
-                         f"{'s' * (len(impeded['walls']) != 1)} hit"
-                         + (f" — {named}" if named else "")
-                         + (f"; {len(impeded['silent'])} juror"
-                            f"{'s' * (len(impeded['silent']) != 1)} did not answer"
-                            if impeded["silent"] else ""),
-                         walls=len(impeded["walls"]))
-            if not reported:
-                progress("no_verdict",
-                         f"{name}: NO VERDICT — none of {len(jurors)} jurors reported")
+                jurors = [{"model": m, "returned": False, "parse_ok": False, "error": err}
+                          for m, err in dead.items()]
+                for d, meta in dispatches.items():
+                    row = juror_row(meta["model"], d, settled.get(d) or {"result": "unsettled"},
+                                    read_report(meta["report"]))
+                    rows[d] = row              # settle_all runs later and fills in its release
+                    jurors.append(row)
+                # a juror Orca proved dead cannot serve the next artifact
+                returned = {j["model"] for j in jurors if j.get("returned")}
+                for d, meta in dispatches.items():
+                    rec = settled.get(d) or {}
+                    if rec.get("result") in ("failed", "abandoned") and meta["model"] not in returned:
+                        ready.pop(meta["model"], None)
+                        boot_failed.setdefault(meta["model"], absence_reason(rec))
+
+                reported = [j for j in jurors if j.get("parse_ok")]
+                confirmed = [j for j in jurors if j.get("returned")]
+                for j in jurors:
+                    if not j.get("parse_ok") and j["model"] not in dead:
+                        progress("absent", f"NO REPORT from {j['model'].split('/')[-1]} — "
+                                 f"{j.get('error')}", model=j["model"])
+                impeded = impediment_rollup(jurors)
+                results.append({"artifact": artifact, "seconds": round(time.monotonic() - started, 1),
+                                "reported": len(reported), "confirmed": len(confirmed),
+                                "attempted": len(jurors), "impediments": impeded,
+                                "jurors": jurors})
+                announce_walls(name, impeded, len(jurors), reported)
     finally:
         # settle before closing: a terminal closed under a live dispatch is what Orca
         # reports back as "no longer live after orchestration recovery"
@@ -993,7 +1307,10 @@ def main():
             os.remove(state)
         # inside finally: the caller treats this file as the settle signal, so a crash that
         # never writes it leaves them waiting for something that will never arrive
-        payload = {"run": run, "runId": run_id, "standard": args.standard, "results": results}
+        payload = {"run": run, "runId": run_id, "standard": args.standard,
+                   "results": results}
+        if args.mode == "headless":
+            payload["streams"] = stream_dir(run_id)   # outside the worktree, so say where
         crash = sys.exc_info()[1]
         if crash is not None:
             payload["error"] = f"{type(crash).__name__}: {crash}"

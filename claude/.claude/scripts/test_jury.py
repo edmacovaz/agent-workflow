@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Behaviour tests for jury.py.  Run: python3 ~/.claude/scripts/test_jury.py
+"""Behaviour tests for jury.py.  Run: python3 claude/.claude/scripts/test_jury.py
+
+By path, from the worktree root: `~/.claude/scripts/` resolves to the main checkout, so the
+habitual path runs the copy you are not editing and goes green over a broken change.
 
 No test framework, deliberately: this must run anywhere the jury does with nothing
 installed.  Every test here exists because a real run broke, and each names the
 iteration it came from — so when one fails, it says which decision is being reversed
 rather than just going red.
 """
-import importlib.util, json, os, subprocess, sys, tempfile
+import importlib.util, json, os, re, subprocess, sys, tempfile
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jury.py")
 
@@ -39,6 +42,9 @@ def repo():
 
 
 def argv(**kw):
+    # every test built through here predates the headless default and pins the Orca path, so
+    # it asks for that path by name; a test wanting the other mode passes its own (LAB-65)
+    kw.setdefault("mode", "tui")
     a = ["jury", "--artifact", "a.md", "--intent", "i.md", "--standard", "plan"]
     for k, v in kw.items():
         a += [f"--{k.replace('_', '-')}", *(v if isinstance(v, list) else [v])]
@@ -1175,8 +1181,564 @@ def test_the_settle_file_carries_the_panels_walls():
         os.chdir(prev)
 
 
+# --------------------------------------------------------------------- iteration 19
+# Headless jurors (LAB-65). Absence is three process facts here, so these pin what the
+# operating system said rather than what a worker claimed about itself.
+
+class FakeProc:
+    """A juror process. `codes` is what poll() returns in order; None means still running."""
+    def __init__(self, codes):
+        self.codes, self.killed = list(codes), False
+
+    def poll(self):
+        return self.codes.pop(0) if len(self.codes) > 1 else self.codes[0]
+
+    def kill(self):
+        self.killed = True
+        self.codes = [-9]
+
+    def wait(self):
+        return -9
+
+
+def headless(m, d, codes, report=None, events="", stderr="", timeout_ms=60000):
+    """One juror through run_headless, with the process and its streams faked."""
+    out = os.path.join(d, "out")
+    os.makedirs(out, exist_ok=True)
+    made = {}
+
+    def launch(exe, model, spec, rep, root, o, run_id, name):
+        # written here rather than up front: run_headless deletes a pre-existing report, so a
+        # test that seeded one would be testing the stale-verdict guard instead
+        if report is not None:
+            open(rep, "w").write(report)
+        open(f"{o}/R.alpha.events.json", "w").write(events)
+        open(f"{o}/R.alpha.stderr.txt", "w").write(stderr)
+        made["proc"] = FakeProc(codes)
+        return {"model": model, "proc": made["proc"], "report": rep,
+                "events": f"{o}/R.alpha.events.json", "stderr": f"{o}/R.alpha.stderr.txt",
+                "handles": (), "started": m.time.monotonic()}
+
+    m.opencode_exe = lambda: "opencode"
+    m.launch_juror = launch
+    m.POLL_S = 0
+    lines = []
+    m.progress = lambda kind, msg, **kw: lines.append((kind, msg))
+    results = []
+    m.run_headless(["m/alpha"], "a.md", "i.md", "plan", out, "R", d, timeout_ms, results)
+    res = results[0]
+    return res, res["jurors"][0], lines, made.get("proc")
+
+
+def test_a_clean_exit_with_a_verdict_is_reported_and_confirmed():
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        good = json.dumps({"verdict": "pass", "findings": [], "impediments": []})
+        res, row, _, _ = headless(m, d, [0], report=good)
+        assert row["returned"] and row["parse_ok"], row
+        assert res["reported"] == 1 and res["confirmed"] == 1, res
+
+
+def test_a_clean_exit_without_a_report_is_not_a_verdict():
+    """Exit 0 settles the process, not the review — `confirmed` without `reported` is exactly
+    the juror this distinguishes, and counting it as a pass is counting silence as approval."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        res, row, _, _ = headless(m, d, [0])
+        assert row["returned"] and not row["parse_ok"], row
+        assert "wrote no report" in row["error"], row
+        assert res["confirmed"] == 1 and res["reported"] == 0, res
+
+
+def test_a_non_zero_exit_carries_its_code_and_its_reason():
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        _, row, _, _ = headless(m, d, [3], stderr="provider refused the request")
+        assert row["exit"] == 3 and not row["returned"], row
+        assert "exited 3" in row["error"] and "provider refused" in row["error"], row
+
+
+def test_a_juror_killed_at_the_deadline_says_so():
+    """A timeout is a clean loss with a name, never a juror that 'did not respond'."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        # a real clock: the deadline has to be short or the suite waits it out (LAB-65)
+        _, row, lines, proc = headless(m, d, [None], timeout_ms=1)
+        assert proc.killed, "the deadline must actually kill it"
+        assert not row["returned"] and "timeout" in row["error"], row
+        assert any(k == "timeout" for k, _ in lines), lines
+
+
+def test_a_wall_survives_the_headless_path_intact():
+    """The report contract is what LAB-55/57/32 read, so it must cross unchanged (LAB-65)."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        walled = json.dumps({"verdict": "pass", "findings": [], "impediments": [
+            {"tool": "bash", "target": "git status", "kind": "refused",
+             "attempts": 4, "refusal": "denied", "purpose": "check the tree"}]})
+        res, row, _, _ = headless(m, d, [0], report=walled)
+        assert row["parse_ok"] and row["returned"], row
+        wall = res["impediments"]["walls"][0]
+        assert (wall["tool"], wall["target"], wall["attempts"]) == ("bash", "git status", 4), wall
+
+
+def test_a_repeated_call_is_reported_as_repeated():
+    """Repetition is the strong signal the event stream buys; silence is not evidence, so only
+    this one is counted. It must never stop a juror — see the next test."""
+    m = load()
+    ev = "\n".join(json.dumps({"part": {"type": "tool", "tool": "bash",
+                                        "state": {"input": {"command": "git status"}}}})
+                   for _ in range(3))
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "e.json")
+        open(path, "w").write(ev)
+        seen = m.observed(path)
+        assert seen["tool"] == "bash" and seen["repeats"] == 3, seen
+        line = m.working_line("m/alpha", {"started": 0, "events": path}, 30)
+        assert "×3" in line and "git status" in line, line
+
+
+def test_a_loop_is_reported_and_never_stopped():
+    """The old seven-minute cutoff reported working jurors as silent. The deadline stays the
+    only stop rule: a juror repeating itself is described, not killed."""
+    m = load()
+    ev = "\n".join(json.dumps({"part": {"type": "tool", "tool": "bash",
+                                        "state": {"input": {"command": "ls"}}}})
+                   for _ in range(9))
+    with tempfile.TemporaryDirectory() as d:
+        m.REPORT_EVERY_S = 0
+        _, row, lines, proc = headless(m, d, [None, None, 0],
+                                       report=json.dumps({"verdict": "pass", "findings": []}),
+                                       events=ev)
+        assert not proc.killed, "a repeating juror must not be killed"
+        assert row["returned"] and row["parse_ok"], row
+        assert any(k == "working" and "×9" in msg for k, msg in lines), lines
+
+
+def test_a_quiet_juror_is_quiet_and_not_stuck():
+    """Three minutes without an event is also what one long model call looks like from out
+    here, so silence is reported as silence and never diagnosed."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "e.json")
+        open(path, "w").write("")
+        assert m.observed(path) is None
+        line = m.working_line("m/alpha", {"started": 0, "events": path}, 200)
+        assert "nothing called yet" in line and "200s" in line, line
+        assert "stuck" not in line, line
+
+
+def test_a_half_written_event_line_never_costs_the_reading():
+    """The stream is read while the juror is still writing it, so a torn last line is normal."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "e.json")
+        open(path, "w").write(
+            json.dumps({"part": {"type": "tool", "tool": "read",
+                                 "state": {"input": {"filePath": "a.md"}}}}) + "\n{\"par")
+        seen = m.observed(path)
+        assert seen and seen["tool"] == "read", seen
+
+
+def test_headless_asks_orca_for_nothing():
+    """Orca has no role in the juror path: a call would mean state nobody settles (LAB-65)."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        def forbidden(*a, **k):
+            raise AssertionError(f"headless called orca: {a}")
+        m.orca = forbidden
+        _, row, _, _ = headless(m, d, [0],
+                                report=json.dumps({"verdict": "pass", "findings": []}))
+        assert row["returned"], row
+
+
+def test_the_juror_is_launched_as_a_bounded_call():
+    m = load()
+    seen = {}
+    m.subprocess = type("S", (), {
+        "Popen": staticmethod(lambda cmd, **k: seen.update(cmd=cmd, kw=k) or FakeProc([0])),
+        "DEVNULL": -3})()
+    with tempfile.TemporaryDirectory() as d:
+        m.launch_juror("oc", "m/alpha", "spec", f"{d}/r.json", d, d, "R", "a")
+    cmd = seen["cmd"]
+    assert cmd[:3] == ["oc", "run", "--agent"] and cmd[3] == "juror", cmd
+    assert "--auto" in cmd and "--format" in cmd and "--dir" in cmd, cmd
+    # stdout to a file, never a pipe: a piped run killed at its deadline came back empty
+    assert seen["kw"]["stdout"] is not m.subprocess.DEVNULL, seen["kw"]
+
+
+def test_a_killed_juror_that_wrote_a_verdict_is_not_called_absent():
+    """The stream and the settle file must not disagree: this row was counted in `reported`
+    while being announced as NO REPORT (LAB-65 review)."""
+    m = load()
+    row = {"model": "m/alpha", "seconds": 30.0, "parse_ok": True, "returned": False,
+           "error": "killed at the 30s timeout"}
+    kind, line = m.headless_line(row)
+    assert kind == "returned" and "NO REPORT" not in line, line
+    assert "wrote a verdict" in line and "killed" in line, line
+
+
+def test_a_juror_is_never_left_running_when_the_wait_breaks():
+    """A juror outlives the runner otherwise, and can drop a report after the settle file was
+    written, where salvage() would serve it as this run's verdict (LAB-65 review)."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "out")
+        os.makedirs(out)
+        procs = []
+
+        def launch(exe, model, spec, rep, root, o, run_id, name):
+            open(f"{o}/x.events.json", "w").write("")
+            p = FakeProc([None])
+            procs.append(p)
+            return {"model": model, "proc": p, "report": rep, "events": f"{o}/x.events.json",
+                    "stderr": f"{o}/x.events.json", "handles": (), "started": 0}
+
+        m.opencode_exe = lambda: "opencode"
+        m.launch_juror = launch
+        m.POLL_S = 0
+        m.progress = lambda *a, **k: None
+        m.headless_row = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            m.run_headless(["m/alpha"], "a.md", "i.md", "plan", out, "R", d, 0, [])
+        except RuntimeError:
+            pass
+        assert procs and procs[0].killed, "the juror must be killed when the wait breaks"
+
+
+def test_two_artifacts_keep_their_own_event_streams():
+    """One run id covers every artifact, so a stream named only for the model meant the second
+    artifact truncated the first's (LAB-65 review)."""
+    m = load()
+    seen = []
+    m.subprocess = type("S", (), {
+        "Popen": staticmethod(lambda cmd, **k: seen.append(k) or FakeProc([0])),
+        "DEVNULL": -3})()
+    with tempfile.TemporaryDirectory() as d:
+        a = m.launch_juror("oc", "m/alpha", "s", f"{d}/r.json", d, d, "R", "first")
+        b = m.launch_juror("oc", "m/alpha", "s", f"{d}/r.json", d, d, "R", "second")
+    assert a["events"] != b["events"] and a["stderr"] != b["stderr"], (a, b)
+    assert "first" in a["events"] and "second" in b["events"], (a, b)
+
+
+def test_the_reports_glob_never_matches_an_event_stream():
+    """`dispatch-mechanics.md` has the caller glob `<run>.<artifact>.<model>.json` for verdicts.
+    A `.events.json` sibling answers that glob and is served as a report (LAB-65 review)."""
+    m = load()
+    import glob as g
+    seen = []
+    m.subprocess = type("S", (), {
+        "Popen": staticmethod(lambda cmd, **k: seen.append(k) or FakeProc([0])),
+        "DEVNULL": -3})()
+    with tempfile.TemporaryDirectory() as d:
+        j = m.launch_juror("oc", "m/alpha", "s", f"{d}/R.a.alpha.json", d, d, "R", "a")
+        open(f"{d}/R.a.alpha.json", "w").write("{}")
+        matched = [os.path.basename(x) for x in g.glob(f"{d}/R.a.*.json")]
+    assert j["events"].endswith(".jsonl"), j["events"]
+    assert matched == ["R.a.alpha.json"], matched
+
+
+# The progress reader's contract. Three review rounds each found a different instance of the
+# same two violations — a shape that made it raise, and a target it could not name — so these
+# are written as invariants over shapes rather than as one test per tool (LAB-65 review).
+#
+#   P1  observed() never raises, whatever the stream holds.
+#   P2  it never claims a repetition it cannot see. `repeats` counts how often that exact
+#       (tool, target) appeared anywhere in the stream — a count, never a loop verdict.
+#   P3  nothing it does can stop a juror — which follows from P1.
+
+HOSTILE_STREAMS = [
+    ("a JSON string line", b'"hello"'),
+    ("a JSON array line", b"[1,2,3]"),
+    ("a bare number", b"42"),
+    ("a null line", b"null"),
+    ("part is a list", b'{"part": [1,2]}'),
+    ("state is not a mapping", b'{"part":{"type":"tool","state":5}}'),
+    ("input is not a mapping", b'{"part":{"type":"tool","state":{"input":7}}}'),
+    ("unparseable text", b"not json at all"),
+    ("empty", b""),
+    ("a torn multi-byte character", b'{"part":{"type":"tool"}}\n{"x": "\xe2'),
+    ("raw bytes", b"\xff\xfe\x00garbage"),
+]
+
+
+def test_observed_never_raises_whatever_the_stream_holds():
+    """P1. The stream is a third party's output, read while it is still being written. An
+    escape from here lands in the wait loop, whose finally kills every juror — a status line
+    destroying the panel it was reporting on (LAB-65 properties pass)."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "e.jsonl")
+        for label, body in HOSTILE_STREAMS:
+            open(path, "wb").write(body)
+            m.observed(path)                       # must not raise
+            m.working_line("m/a", {"started": 0, "events": path}, 10)
+        assert m.observed(os.path.join(d, "absent.jsonl")) is None
+
+
+def test_every_tool_names_its_target():
+    """P2, first half. Each tool puts its target under a different key; one we do not read
+    keys as "" and makes two different calls look like one repeated. Rounds found `skill`'s
+    `name` and `apply_patch`'s `patchText` separately — this is the table."""
+    m = load()
+    cases = [("bash", "command", "git status"), ("read", "filePath", "/tmp/a.md"),
+             ("grep", "pattern", "juror"), ("glob", "path", "agents/out"),
+             ("skill", "name", "review-changes"), ("apply_patch", "patchText", "@@ -1 +1 @@")]
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "e.jsonl")
+        for tool, key, val in cases:
+            open(path, "w").write(json.dumps(
+                {"part": {"type": "tool", "tool": tool, "state": {"input": {key: val}}}}))
+            seen = m.observed(path)
+            assert seen["tool"] == tool and seen["target"] == val, (tool, seen)
+
+
+def test_no_repeat_marker_without_a_target():
+    """P2, second half — and the durable form of it. A tool whose target key we have never met
+    keys as "", which cannot tell two calls apart, so ×N would assert a loop nobody saw."""
+    m = load()
+    ev = "\n".join(json.dumps({"part": {"type": "tool", "tool": "future_tool",
+                                        "state": {"input": {"unknownKey": n}}}})
+                   for n in ("a", "b", "c"))
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "e.jsonl")
+        open(path, "w").write(ev)
+        assert m.observed(path)["repeats"] == 3          # it did count them
+        line = m.working_line("m/a", {"started": 0, "events": path}, 10)
+        assert "×" not in line, line                     # and it must not claim they matched
+
+
+def test_a_repeat_count_never_collapses_two_different_targets():
+    """P2 again, by the route that started it: keying on a *rendered* target collapsed nine
+    reads of six files into one call repeated nine times (LAB-65 review)."""
+    m = load()
+    base = "/Users/x/very/long/worktree/prefix/that/eats/the/budget/claude/scripts/"
+    ev = "\n".join(json.dumps({"part": {"type": "tool", "tool": "read",
+                                        "state": {"input": {"filePath": base + f}}}})
+                   for f in ("jury.py", "test_jury.py", "jury.py"))
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "e.jsonl")
+        open(path, "w").write(ev)
+        # deliberately non-adjacent: the two jury.py reads are separated by another call, and
+        # the count is "how often this call was made", not "how long the trailing run was"
+        assert m.observed(path)["repeats"] == 2, m.observed(path)
+
+
+def test_the_working_line_names_the_file_not_just_its_directory():
+    """Absolute paths in a worktree share a long prefix, so trimming the raw string told the
+    caller which directory and never which file (LAB-65 review)."""
+    m = load()
+    root = os.getcwd()
+    ev = json.dumps({"part": {"type": "tool", "tool": "read", "state": {"input": {
+        "filePath": os.path.join(root, "claude/.claude/scripts/test_jury.py")}}}})
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "e.jsonl")
+        open(path, "w").write(ev)
+        line = m.working_line("m/alpha", {"started": 0, "events": path}, 30)
+    assert "test_jury.py" in line and root not in line, line
+
+
+def test_undecodable_stderr_never_kills_the_survivors():
+    """Same contract as P1, reached through headless_row while settling one juror."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "err.txt")
+        open(path, "wb").write(b"provider said \xff\xfe no")
+        assert "provider said" in m.stderr_tail(path)
+        assert m.stderr_tail(os.path.join(d, "absent.txt")) == ""
+
+
+def test_an_interrupted_wait_keeps_the_jurors_it_already_settled():
+    """A TaskStop becomes SystemExit out of the sleep, and rows built in a local were discarded
+    with it — main only salvages when *no* artifact produced results, so a two-artifact panel
+    lost the second artifact's verdicts entirely (LAB-65 review)."""
+    m = load()
+    settled, pending = [], []
+    with tempfile.TemporaryDirectory() as d:
+        done = os.path.join(d, "done.json")
+        open(done, "w").write(json.dumps({"verdict": "pass", "findings": []}))
+        open(os.path.join(d, "e.jsonl"), "w").write("")
+        for name, codes in (("m/done", [0]), ("m/slow", [None])):
+            pending.append({"model": name, "proc": FakeProc(codes), "report": done,
+                            "events": os.path.join(d, "e.jsonl"),
+                            "stderr": os.path.join(d, "e.jsonl"), "handles": (), "started": 0})
+        m.POLL_S = 0
+        m.progress = lambda *a, **k: None
+        rounds = {"n": 0}
+
+        def interrupt(_):
+            rounds["n"] += 1
+            if rounds["n"] > 1:
+                raise SystemExit("terminated")
+
+        m.time = type("T", (), {"sleep": staticmethod(interrupt),
+                                "monotonic": staticmethod(lambda: 0.0)})()
+        try:
+            m.wait_out(settled, pending, 10_000, 0, 2)
+            raise AssertionError("expected the interrupt to propagate")
+        except SystemExit:
+            pass
+    assert [r["model"] for r in settled] == ["m/done"], settled
+    assert settled[0]["parse_ok"], settled
+
+
+def test_an_interrupted_run_still_records_every_juror():
+    """salvage() rebuilds a result from whichever reports exist, so a run that lost its rows
+    reported `attempted: 2` for a four-juror panel — a record that reads better than the run
+    (LAB-65 jury). run_headless writes the partial result itself instead."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "out")
+        os.makedirs(out)
+        made = []
+
+        def launch(exe, model, spec, rep, root, o, run_id, name):
+            if model == "m/good":
+                open(rep, "w").write(json.dumps({"verdict": "pass", "findings": []}))
+            open(f"{o}/{model[-1]}.jsonl", "w").write("")
+            proc = FakeProc([0] if model == "m/good" else [None])
+            made.append(proc)
+            return {"model": model, "proc": proc, "report": rep,
+                    "events": f"{o}/{model[-1]}.jsonl", "stderr": f"{o}/{model[-1]}.jsonl",
+                    "handles": (), "started": 0}
+
+        m.opencode_exe = lambda: "opencode"
+        m.launch_juror = launch
+        m.POLL_S = 0
+        said = []
+        m.progress = lambda kind, message, **k: said.append((kind, message))
+        rounds = {"n": 0}
+
+        def interrupt(_):
+            rounds["n"] += 1
+            if rounds["n"] > 1:
+                raise SystemExit("terminated")
+
+        m.time = type("T", (), {"sleep": staticmethod(interrupt),
+                                "monotonic": staticmethod(lambda: 0.0)})()
+        results = []
+        try:
+            m.run_headless(["m/good", "m/slow"], "a.md", "i.md", "plan", out, "R", d, 9999,
+                           results)
+            raise AssertionError("expected the interrupt to propagate")
+        except SystemExit:
+            pass
+    assert results, "an interrupted run must still record its result"
+    r = results[0]
+    assert (r["attempted"], r["reported"]) == (2, 1), r
+    slow = [j for j in r["jurors"] if j["model"] == "m/slow"][0]
+    assert "stopped before it finished" in slow["error"], slow
+    assert made[1].killed, "the unfinished juror must be killed"
+    # the caller is told, in words: stubbing progress to a no-op hid a swapped argument that
+    # printed the line's kind as its message ("absent") on a real run
+    told = [m_ for k, m_ in said if k == "absent"]
+    assert told and "NO REPORT from slow" in told[0], said
+
+
+def test_a_brace_in_a_path_never_aborts_the_panel():
+    """The spec was formatted twice, so the second pass ran over the caller's own paths and a
+    brace in one raised before a single juror launched (LAB-65 review). Restored after a range
+    edit dropped it."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "out")
+        os.makedirs(out)
+        specs = []
+
+        def launch(exe, model, spec, rep, root, o, run_id, name):
+            specs.append(spec)
+            open(f"{o}/x.jsonl", "w").write("")
+            return {"model": model, "proc": FakeProc([0]), "report": rep,
+                    "events": f"{o}/x.jsonl", "stderr": f"{o}/x.jsonl",
+                    "handles": (), "started": 0}
+
+        m.opencode_exe = lambda: "opencode"
+        m.launch_juror = launch
+        m.POLL_S = 0
+        m.progress = lambda *a, **k: None
+        m.run_headless(["m/alpha"], "a{weird}.md", "i.md", "plan", out, "R", d, 60000, [])
+    assert specs and "a{weird}.md" in specs[0], specs
+
+
+def test_a_failed_launch_leaks_no_handle():
+    """Both files are opened before the process starts, so a failure between them left the
+    first open and unreferenced (LAB-65 properties pass)."""
+    m = load()
+    real, opened = open, []
+
+    def flaky(path, *a, **k):
+        if str(path).endswith(".stderr.txt"):
+            raise OSError("no space")
+        fh = real(path, *a, **k)
+        opened.append(fh)
+        return fh
+
+    import builtins
+    builtins.open = flaky
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            try:
+                m.launch_juror("oc", "m/a", "s", f"{d}/r.json", d, d, "R", "a")
+                raise AssertionError("expected the launch to fail")
+            except OSError:
+                pass
+    finally:
+        builtins.open = real
+    assert opened and opened[0].closed, "the first handle must be closed"
+
+
+def test_a_settled_juror_is_counted_against_the_panel():
+    """`dispatch-mechanics.md` advertises `— 1 of 4`; nothing emitted it (LAB-65 review)."""
+    m = load()
+    row = {"model": "m/alpha", "seconds": 12.0, "parse_ok": True, "returned": True}
+    assert m.headless_line(row, 1, 4)[1].endswith("— 1 of 4"), m.headless_line(row, 1, 4)
+
+
+def test_main_runs_the_headless_path_end_to_end():
+    """The mode that ships had no test through main(): the new tests all entered at
+    run_headless, so argument wiring and the settle file's shape went uncovered (LAB-65 review)."""
+    m = load()
+    d = repo()
+    cwd = os.getcwd()
+    try:
+        os.chdir(d)
+        m.check_models = lambda models: None
+        m.opencode_exe = lambda: "opencode"
+
+        def launch(exe, model, spec, rep, root, o, run_id, name):
+            open(rep, "w").write(json.dumps({"verdict": "revise", "findings": [
+                {"dimension": "fit", "severity": "nit", "claim": "c", "evidence": "e"}],
+                "impediments": []}))
+            open(f"{o}/e.json", "w").write("")
+            return {"model": model, "proc": FakeProc([0]), "report": rep,
+                    "events": f"{o}/e.json", "stderr": f"{o}/e.json", "handles": (),
+                    "started": 0}
+
+        m.launch_juror = launch
+        m.POLL_S = 0
+        m.orca = lambda *a, **k: (_ for _ in ()).throw(AssertionError("headless called orca"))
+        sys.argv = ["jury", "--artifact", "a.md", "--intent", "i.md", "--standard", "plan",
+                    "--run-id", "E2E", "--out", "out", "--models", "m/alpha"]
+        m.main()
+        settled = json.load(open(os.path.join(d, "out", "E2E.jury-result.json")))
+    finally:
+        os.chdir(cwd)
+    assert settled["run"] is None and settled["runId"] == "E2E", settled
+    r = settled["results"][0]
+    assert (r["reported"], r["confirmed"], r["attempted"]) == (1, 1, 1), r
+    assert r["jurors"][0]["report"]["verdict"] == "revise", r["jurors"][0]
+
+
 def main():
+    defined = re.findall(r"^def (test_\w+)", open(__file__).read(), re.M)
+    dupes = sorted({n for n in defined if defined.count(n) > 1})
+    if dupes:
+        # globals() keeps one definition per name, so a duplicate is a test that never runs
+        # while the tally still counts it — a green suite hiding a hole (LAB-65 review)
+        print(f"  FAIL duplicate test names, so one of each never runs: {', '.join(dupes)}")
+        return 1
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    assert len(tests) == len(defined), f"{len(defined)} defined, {len(tests)} collected"
     failed = []
     for t in tests:
         try:

@@ -9,17 +9,29 @@ built here rather than somewhere less revertible.
 
 ## How work happens here
 
-**This repo is worked on `main`, in the main checkout.** `~/.claude` symlinks point there —
-`~/.claude/skills -> ../dotfiles/claude/.claude/skills` — so a change made anywhere else is a
-copy nothing consumes. That is why the usual worktree-per-issue convention is overridden here.
-Reading from anywhere is fine; before changing anything from somewhere else, stop and ask.
+**One Orca worktree per issue**, the usual convention. This section states no override, so
+`start-work` applies that default. It used to declare the opposite — work on `main`, in the main
+checkout — and what that rule was really protecting is written out below instead (LAB-65).
 
-This section is the override `start-work` reads: it is where a repo states where its work
-happens, and without it that skill applies its default of one Orca worktree per issue.
+**Nothing here is live until it is merged and pushed.** The paths agents actually load resolve
+to the *main checkout*, never to your worktree:
 
-**Edits are live on save.** `claude/.claude/skills/` is symlinked into `~/.claude/skills/`,
-so changing a skill changes what running sessions use — including the session making the
-change. The same applies to `claude/.claude/scripts/jury.py`.
+| Loaded path | Resolves to |
+| --- | --- |
+| `~/.claude/skills`, `~/.claude/scripts` | `~/dotfiles/claude/.claude/…` |
+| `~/.config/opencode/agents`, `opencode.jsonc` | `~/dotfiles/opencode/.config/opencode/…` |
+
+So a skill, script or agent file edited in a worktree is not what any session loads, including
+the session editing it. Run this repo's own code **by path from the worktree root** —
+`python3 claude/.claude/scripts/test_jury.py`, never `~/.claude/scripts/test_jury.py` — or you
+exercise the copy you are not editing.
+
+`juror.md` is the sharpest case, because nothing about it looks path-dependent: `opencode --agent
+juror` resolves the agent from `~/.config/opencode/agents/juror.md` whichever worktree the juror
+runs in. Testing an edited one needs a copy at `.opencode/agent/juror.md` in the worktree, which
+opencode discovers alongside the global agents. The repo's root `.gitignore` keeps it
+uncommittable: a committed copy would pin every juror in every clone to that snapshot, because
+opencode prefers a project-local agent over `~/.config/opencode/agents/`.
 
 Secrets are never tracked; `README.md` lists what is deliberately excluded.
 
@@ -34,13 +46,15 @@ sessions, including ones that would otherwise have loaded this file.
 | `claude/.claude/scripts/` | `jury.py` (the panel runner) and `test_jury.py`. |
 | `claude/.claude/CLAUDE.md` | Global user instructions. Applies everywhere; merely stored here. |
 | `opencode/.config/opencode/` | `agents/juror.md` and `opencode.jsonc`. |
-| `agents/in`, `agents/out` | Jury packs, juror reports, each run's `<run>.progress.jsonl`, and the `.terminals/` state files a later run reads to settle an abandoned predecessor. Each holds a `.gitignore` of `*`, so they stay uncommittable in any clone rather than relying on the machine's global git config. |
+| `agents/in`, `agents/out` | Jury packs, juror reports, each run's `<run>.progress.jsonl`, and the `.terminals/` state files the `tui` mode's recovery sweep reads. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. Each holds a `.gitignore` of `*`, so they stay uncommittable in any clone rather than relying on the machine's global git config. |
 | `sandbox-guest/` | Source-only, copied into the sandbox VM by the `sandbox` skill. Never symlinked into the host `~`, so host and VM agents keep separate instruction sets. |
 
 ## Orchestration
 
-Workers are dispatched through **Orca** — durable Run/Task/Dispatch state, typed messaging,
-decision gates, and per-worker model selection.
+Writer sessions are dispatched through **Orca** — durable Run/Task/Dispatch state, typed
+messaging, decision gates, and per-worker model selection. **Jurors are not.** A juror is a
+bounded `opencode run` process that `jury.py` starts and waits on; its exit settles it, so there
+is nothing for Orca to place, observe or stop (LAB-65).
 
 The division of responsibility: **Orca owns placement, state and stop rules; Claude owns
 judgment.** Orca's own dispatch backstop is separate from any loop's iteration cap — they
@@ -90,15 +104,16 @@ file, which those repos never see.
 ## Testing
 
 ```
-python3 ~/.claude/scripts/test_jury.py
+python3 claude/.claude/scripts/test_jury.py
 ```
+
+**By path, from the worktree root.** `~/.claude/scripts/` resolves to the main checkout, so the
+habitual `python3 ~/.claude/scripts/test_jury.py` exercises the copy you are not editing — and
+passes while your change is still broken. Use that form only to confirm a merge landed.
 
 No test framework, deliberately: it must run anywhere the jury does, with nothing installed.
 Every test exists because a real run broke, and names the iteration it came from — so a
 failing test says which decision is being reversed rather than just going red.
-
-Run them from the main checkout: `~/.claude/scripts/` resolves there, so running from
-elsewhere exercises that copy rather than your edit.
 
 ## What deliberately isn't here
 
