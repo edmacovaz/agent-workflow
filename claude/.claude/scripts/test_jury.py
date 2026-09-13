@@ -1729,6 +1729,120 @@ def test_main_runs_the_headless_path_end_to_end():
     assert r["jurors"][0]["report"]["verdict"] == "revise", r["jurors"][0]
 
 
+# --------------------------------------------------------------------- LAB-56 iteration 1
+#
+# The juror's own permission block, asserted rather than read.  An allowlist of `git status*`
+# patterns was a write primitive: opencode matches a pattern against the whole command text,
+# redirect included, and never path-checks the redirect target, so `git log > /tmp/x` ran and
+# created it, `edit` and `external_directory` both denying.  These encode the invariant instead of
+# that one vector.  They prove the file conforms to semantics measured against opencode
+# 1.18.30 — not that opencode still behaves that way, which only a live probe can show.
+
+JUROR_MD = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                        "..", "..", "..", "opencode", ".config", "opencode", "agents", "juror.md")
+
+# opencode 1.18.30's permission surface.  A key absent from the block is not thereby denied:
+# resolution starts from a built-in `"*": "allow"`, which is how `websearch` stayed open.
+PERMISSION_KEYS = ("read", "edit", "glob", "grep", "list", "bash", "task", "external_directory",
+                   "todowrite", "question", "webfetch", "websearch", "lsp", "skill", "doom_loop")
+
+
+def juror_permissions():
+    """The `permission:` block, hand-parsed: there is no yaml in the standard library and this
+    suite must run with nothing installed."""
+    front = open(JUROR_MD, encoding="utf-8").read().split("---\n")[1]
+    keys, bash, in_bash = [], [], False
+    for raw in front.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 2:
+            name, _, action = line.strip().partition(":")
+            name = name.strip().strip('"')
+            in_bash = name == "bash"
+            keys.append((name, action.strip()))
+        elif indent == 4 and in_bash:
+            pattern, action = line.strip().rsplit(":", 1)
+            bash.append((pattern.strip().strip('"'), action.strip()))
+    assert bash, "no bash rules parsed — the block's shape changed and these tests went blind"
+    return keys, bash
+
+
+def permits(pattern, command):
+    """opencode compiles `*` to `.*` and `?` to `.`, matches the whole string, and expands `~`
+    in the pattern but never in the command a juror writes."""
+    pattern = os.path.expanduser(pattern) if pattern.startswith("~") else pattern
+    tail = ""
+    if pattern.endswith(" *"):        # opencode rewrites this to `( .*)?`, so `orca x *`
+        pattern, tail = pattern[:-2], "( .*)?"   # also permits a bare `orca x`
+    rx = "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in pattern) + tail
+    return re.fullmatch(rx, command, re.S) is not None
+
+
+def resolve(rules, command):
+    """Every command node must be permitted, the last matching rule wins, and a redirected
+    statement is matched with its redirect still attached."""
+    for part in re.split(r"&&|\|\||;|\|", command):
+        part = part.strip()
+        if not part:
+            continue
+        action = "deny"
+        for pattern, act in rules:
+            if permits(pattern, part):
+                action = act
+        if action != "allow":
+            return action
+    return "allow"
+
+
+def test_no_permitted_command_can_carry_a_redirect():
+    """Generated from the file's own allow entries, so an entry added later is covered the day
+    it is added rather than when someone remembers to extend a list of vectors."""
+    _, bash = juror_permissions()
+    for pattern, action in bash:
+        if action != "allow":
+            continue
+        sample = os.path.expanduser(pattern) if pattern.startswith("~") else pattern
+        sample = sample.replace("*", "HEAD").replace("?", "~")
+        assert resolve(bash, sample) == "allow", f"{pattern} does not permit its own {sample}"
+        for redirect in (" > /tmp/pwned", " >> /tmp/pwned", " 2> /tmp/pwned"):
+            assert resolve(bash, sample + redirect) == "deny", f"{pattern} permits a redirect"
+
+
+def test_the_juror_shell_reaches_only_the_inspect_verbs():
+    """The blindness this fixes was real, so the allows matter as much as the denies: a panel
+    where every juror is refused its first move is half the panel producing nothing."""
+    _, bash = juror_permissions()
+    for command in ("git status", "git log --oneline", "ls agents/out",
+                    "python3 claude/.claude/scripts/test_jury.py",
+                    "~/.claude/scripts/inspect.sh status && rm -rf /",
+                    "~/.claude/scripts/inspect.sh log | head -5",
+                    "~/.claude/scripts/inspect.sh nonesuch"):
+        assert resolve(bash, command) == "deny", f"{command!r} is permitted"
+    for command in ("orca orchestration",  # bare: opencode's ` *` rewrite permits it
+                    "~/.claude/scripts/inspect.sh status",
+                    "~/.claude/scripts/inspect.sh show HEAD",
+                    "~/.claude/scripts/inspect.sh ignored agents/out/x.md",
+                    os.path.expanduser("~/.claude/scripts/inspect.sh log"),
+                    "orca orchestration worker-done --outcome succeeded"):
+        assert resolve(bash, command) == "allow", f"{command!r} is refused"
+
+
+def test_every_permission_key_is_named_and_omissions_are_closed():
+    """`websearch` reached the open internet from a whole panel because no one wrote it down.
+    The leading `"*": deny` is what makes the enumeration a closure rather than a snapshot."""
+    keys, _ = juror_permissions()
+    assert keys[0] == ("*", "deny"), f"the block must open with a top-level deny, not {keys[0]}"
+    named = dict(keys)
+    missing = [k for k in PERMISSION_KEYS if k not in named]
+    assert not missing, f"unnamed permission keys: {', '.join(missing)}"
+    # Names alone would pass with any of these flipped to allow — which is the regression this
+    # test is named for, so it asserts the action too (LAB-56 review)
+    for key in ("webfetch", "websearch", "task", "question"):
+        assert named[key] == "deny", f"{key} is {named[key]!r}, not deny"
+
+
 def main():
     defined = re.findall(r"^def (test_\w+)", open(__file__).read(), re.M)
     dupes = sorted({n for n in defined if defined.count(n) > 1})

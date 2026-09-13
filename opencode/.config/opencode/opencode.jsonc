@@ -10,11 +10,18 @@
   },
   "permission": {
     "edit": "ask",
+    // Leading token literal, never `*git status*`: a wildcard-led pattern matches anywhere in
+    // a command, so `git commit -m "git status fix"` would have run unprompted (LAB-56).
     "bash": {
       "*": "ask",
-      "*git status*": "allow",
-      "*git diff*": "allow",
-      "*git log*": "allow"
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      // Last, so it overrides the allows above. A pattern is matched against the whole command
+      // text including the redirect, whose target is never path-checked, so `git log*` also
+      // allowed `git log > /tmp/x` and created it. `ask` rather than `deny` because a person is
+      // here to answer; the juror denies it outright, having nobody (LAB-56).
+      "*>*": "ask"
     },
     "external_directory": "ask"
   }

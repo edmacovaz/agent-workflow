@@ -198,7 +198,11 @@ def excerpt(value, limit=200):
 
 # A wall named outside these is kept and counted as malformed, never dropped: the juror
 # still witnessed it, and this is telemetry about our own room (LAB-57).
-IMPEDIMENT_TOOLS = ("bash", "read", "skill", "webfetch", "other")
+# Every tool a juror can be refused on. An entry naming anything else is dropped by
+# read_impediments, so a wall we newly created — `websearch`, denied since LAB-56 — would be
+# reported honestly and then vanish before the rollup (LAB-56).
+IMPEDIMENT_TOOLS = ("bash", "read", "write", "glob", "grep", "list", "skill",
+                    "webfetch", "websearch", "other")
 IMPEDIMENT_KINDS = ("refused", "failed")
 
 
