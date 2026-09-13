@@ -8,7 +8,7 @@ Personal dotfiles managed with [GNU Stow](https://www.gnu.org/software/stow/).
 |---------|--------|
 | `claude` | `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, `~/.claude/skills/` |
 | `git`    | `~/.gitconfig`, `~/.config/git/ignore` |
-| `opencode` | `~/.config/opencode/opencode.jsonc`, `~/.config/opencode/agents/`, `~/.config/opencode/commands/`, `~/.config/opencode-sandbox/config.json` |
+| `opencode` | `~/.config/opencode/opencode.jsonc`, `~/.config/opencode/agents/`, `~/.config/opencode/commands/`, `~/.config/opencode/plugins/`, `~/.config/opencode-sandbox/config.json` |
 | `zsh`    | `~/.zshenv`, `~/.zprofile`, `~/.zshrc` |
 | `zed`    | `~/.config/zed/keymap.json`, `~/.config/zed/settings.json` |
 

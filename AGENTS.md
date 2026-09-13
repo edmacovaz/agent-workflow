@@ -19,7 +19,7 @@ to the *main checkout*, never to your worktree:
 | Loaded path | Resolves to |
 | --- | --- |
 | `~/.claude/skills`, `~/.claude/scripts` | `~/dotfiles/claude/.claude/…` |
-| `~/.config/opencode/agents`, `opencode.jsonc` | `~/dotfiles/opencode/.config/opencode/…` |
+| `~/.config/opencode/agents`, `opencode.jsonc`, `plugins` | `~/dotfiles/opencode/.config/opencode/…` |
 
 So a skill, script or agent file edited in a worktree is not what any session loads, including
 the session editing it. Run this repo's own code **by path from the worktree root** —
@@ -43,9 +43,9 @@ sessions, including ones that would otherwise have loaded this file.
 | Path | Holds |
 | --- | --- |
 | `claude/.claude/skills/` | Skills, symlinked to `~/.claude/skills/`. **User-global** — they run in every repo. |
-| `claude/.claude/scripts/` | `jury.py` (the panel runner), `test_jury.py`, and `inspect.sh` — the fixed read-only verbs a juror's shell is limited to. |
+| `claude/.claude/scripts/` | `jury.py` (the panel runner), its `test_jury.py`, `test_no_retry.mjs` (the juror plugin's suite — kept here rather than beside the plugin, because opencode loads every file in a plugin directory as a plugin), and `inspect.sh` — the fixed read-only verbs a juror's shell is limited to. |
 | `claude/.claude/CLAUDE.md` | Global user instructions. Applies everywhere; merely stored here. |
-| `opencode/.config/opencode/` | `agents/juror.md` and `opencode.jsonc`. |
+| `opencode/.config/opencode/` | `agents/juror.md`, `opencode.jsonc`, and `plugins/` — hooks that run inside a juror's own process, currently `no-retry.js` (LAB-71). |
 | `agents/in`, `agents/out` | Jury packs, juror reports, each run's `<run>.progress.jsonl`, and the `.terminals/` state files the `tui` mode's recovery sweep reads. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. Each holds a `.gitignore` of `*`, so they stay uncommittable in any clone rather than relying on the machine's global git config. |
 | `sandbox-guest/` | Source-only, copied into the sandbox VM by the `sandbox` skill. Never symlinked into the host `~`, so host and VM agents keep separate instruction sets. |
 
@@ -73,6 +73,20 @@ The juror's policy is the `permission` block of
 rather than the few someone remembered — `websearch` rode that silence until LAB-56, so a
 panel reached the open web while it could not run `git status`. Read the block there; it is
 not reproduced here, because the copy would go stale.
+
+**The block is not the whole of it.** Plugins run inside the juror's own process and shape what
+it does as well: `no-retry.js` counts the calls the room turns down, tells the juror each turn
+what it has already hit, and blocks one it has made ten times (LAB-71). Two directories supply
+them, and `--pure` loads neither:
+
+| Loaded from | Holds |
+| --- | --- |
+| `~/.config/opencode/plugins/` | This repo's, via stow — so a new plugin is not live until `stow opencode` has run. |
+| `$OPENCODE_CONFIG_DIR/plugins/` | Orca's, injected into every juror launched from a session it started. Not ours and not in this repo. It **adds** a directory rather than replacing ours — measured, because the wording invites the opposite reading and a juror duly read it that way (LAB-71). |
+
+A hook sees only tools that are in the toolset, and never sees a refusal itself: the refusal is
+thrown inside the tool's own execute, so all a plugin can observe is that the call never
+completed.
 
 **What the permission system is, and is not.** opencode's `bash` permission filters command
 *text*; it does not bound capability. For bash, `external_directory` governs only the working
@@ -122,11 +136,34 @@ A skill here runs against the other repos too. Nothing repo-specific belongs in 
 material a skill defers belongs in that skill's own `references/` directory — not in this
 file, which those repos never see.
 
+## Languages
+
+**Python unless the runtime forces otherwise.** The runner and its tests are Python; `inspect.sh`
+is shell because a command wrapper has to be. JavaScript exists in exactly one place for one
+reason: opencode loads plugins as JS modules into its own process, so a juror-side hook cannot
+be written in anything else — and a test that exercises one has to import it.
+
+That is the whole warrant. JavaScript elsewhere, or a third language, is a decision to take
+deliberately and record, not something to inherit from the first file that needed it (LAB-71).
+
+**No `package.json`, and no lockfile.** Neither suite has a dependency, and the plugin suite
+imports the plugin as a data URL precisely so that none is needed. Adding either is a stack
+change, not a detail.
+
 ## Testing
 
 ```
 python3 claude/.claude/scripts/test_jury.py
+node claude/.claude/scripts/test_no_retry.mjs
 ```
+
+Two suites because the code is in two languages: the runner is Python, and the juror's plugin
+is JavaScript running inside opencode's own process, where Python cannot reach it. Neither
+needs a framework or a package.
+
+The plugin suite drives its hooks directly rather than convening a panel. A model will not
+repeat itself on demand — asked to make a refused call twelve times it made four, then stopped
+and wrote its report — so a panel cannot reach the blocking path at all (LAB-71).
 
 **By path, from the worktree root.** `~/.claude/scripts/` resolves to the main checkout, so the
 habitual `python3 ~/.claude/scripts/test_jury.py` exercises the copy you are not editing — and
