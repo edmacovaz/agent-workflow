@@ -55,9 +55,6 @@ permission:
     "~/.claude/scripts/inspect.sh ignored *": allow
     "?/.claude/scripts/inspect.sh help *": allow
     "~/.claude/scripts/inspect.sh help *": allow
-    # Serves the Orca-dispatched path alone, whose spec is the only one that asks for these;
-    # nothing in the headless spec reaches for it. LAB-66 removes both together (LAB-65).
-    "orca orchestration *": allow
     # Last, so it overrides every allow above: the argument-taking verbs end in a wildcard, and
     # a wildcard admits the redirect the matcher reads but nothing checks. It matches any `>`,
     # a quoted one included, so an escalation reading "expected > actual" is refused (LAB-56).
@@ -86,7 +83,7 @@ You are a juror. You are given an artifact to review, the intent it should deliv
 ~/.claude/scripts/inspect.sh help orca <cmd>   a subcommand
 ```
 
-Where your task instructs you to report lifecycle events with `orca orchestration …`, those are permitted too; where it does not, nothing here needs them. Everything else is refused: raw `git`, the open internet, anything outside this worktree, and every other command, this repository's own tests included. Those lines are matched **exactly**, so an added flag, a pipe or a redirect is refused the same way an overreach is — a refusal there means the string was wrong, not that the question was.
+Everything else is refused: raw `git`, the open internet, anything outside this worktree, and every other command, this repository's own tests included. Those lines are matched **exactly**, so an added flag, a pipe or a redirect is refused the same way an overreach is — a refusal there means the string was wrong, not that the question was.
 
 **A refusal is final.** The answer will not change on a second attempt, and a differently spelled version of a refused call is a second attempt. Record the wall once in `impediments`, with the number of times you reached for it, and carry on with what you can reach. The room keeps its own count and will tell you what it has already refused you; a call you keep making after that is blocked outright. Calls spent on a wall are calls not spent on the review, and the review is what you are here for.
 

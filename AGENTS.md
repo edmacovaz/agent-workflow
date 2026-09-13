@@ -46,15 +46,17 @@ sessions, including ones that would otherwise have loaded this file.
 | `claude/.claude/scripts/` | `jury.py` (the panel runner), its `test_jury.py`, `test_no_retry.mjs` (the juror plugin's suite — kept here rather than beside the plugin, because opencode loads every file in a plugin directory as a plugin), and `inspect.sh` — the fixed read-only verbs a juror's shell is limited to. |
 | `claude/.claude/CLAUDE.md` | Global user instructions. Applies everywhere; merely stored here. |
 | `opencode/.config/opencode/` | `agents/juror.md`, `opencode.jsonc`, and `plugins/` — hooks that run inside a juror's own process, currently `no-retry.js` (LAB-71). |
-| `agents/in`, `agents/out` | Jury packs, juror reports, each run's `<run>.progress.jsonl`, and the `.terminals/` state files the `tui` mode's recovery sweep reads. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. Each holds a `.gitignore` of `*`, so they stay uncommittable in any clone rather than relying on the machine's global git config. |
+| `agents/in`, `agents/out` | Jury packs, juror reports, and each run's `<run>.progress.jsonl`. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. Each holds a `.gitignore` of `*`, so they stay uncommittable in any clone rather than relying on the machine's global git config. |
 | `sandbox-guest/` | Source-only, copied into the sandbox VM by the `sandbox` skill. Never symlinked into the host `~`, so host and VM agents keep separate instruction sets. |
 
 ## Orchestration
 
 Writer sessions are dispatched through **Orca** — durable Run/Task/Dispatch state, typed
 messaging, decision gates, and per-worker model selection. **Jurors are not.** A juror is a
-bounded `opencode run` process that `jury.py` starts and waits on; its exit settles it, so there
-is nothing for Orca to place, observe or stop (LAB-65).
+bounded `opencode run` process that `jury.py` starts and waits on. Its exit settles it, and the
+deadline is the only other thing that can. The runner reads each juror's event stream and reports
+what it sees, but never acts on it: an observation that could stop a juror is exactly the
+competing stop rule LAB-65 removed (LAB-66).
 
 The division of responsibility: **Orca owns placement, state and stop rules; Claude owns
 judgment.** Orca's own dispatch backstop is separate from any loop's iteration cap — they
