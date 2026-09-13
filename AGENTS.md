@@ -33,6 +33,13 @@ opencode discovers alongside the global agents. The repo's root `.gitignore` kee
 uncommittable: a committed copy would pin every juror in every clone to that snapshot, because
 opencode prefers a project-local agent over `~/.config/opencode/agents/`.
 
+**`glob` under-reports here, and says nothing.** opencode never passes `--hidden` to ripgrep,
+which prunes hidden directories before it matches — so *every* pattern misses them, not only one
+naming a dot directory: `**/*.md` returns 5 of this repo's 30. A stow tree keeps 41 of 47 files
+under `.claude`, `.config` or a dotfile name. That is success with zero rows rather than an error,
+so no tool reports it and no impediment records it. `git ls-files` is the answer that holds in any
+session. The juror is given no `glob` at all (LAB-72); Claude sessions still have one.
+
 Secrets are never tracked; `README.md` lists what is deliberately excluded.
 
 **Commit is not enough — push.** An unpushed change here won't reach other checkouts or new

@@ -1057,6 +1057,14 @@ def test_every_permission_key_is_named_and_omissions_are_closed():
         assert named[key] == "deny", f"{key} is {named[key]!r}, not deny"
 
 
+def test_glob_is_denied_because_it_answers_wrongly_instead_of_refusing():
+    """Every other denial here closes a reach.  This one withholds a tool: opencode never passes
+    `--hidden` to ripgrep, so every pattern misses the 41 of 47 files a stow tree keeps under a
+    dotted path, and success with zero rows is the one failure `impediments` cannot record (LAB-72)."""
+    keys, _ = juror_permissions()
+    assert dict(keys)["glob"] == "deny", "glob is granted; it under-reports silently"
+
+
 def main():
     defined = re.findall(r"^def (test_\w+)", open(__file__).read(), re.M)
     dupes = sorted({n for n in defined if defined.count(n) > 1})

@@ -16,7 +16,6 @@ permission:
     # construction and is how this repo documents config work (LAB-56).
     "*.env.example": allow
   list: allow
-  glob: allow
   grep: allow
   lsp: allow
   skill: allow
@@ -61,6 +60,10 @@ permission:
     "*>*": deny
   task: deny
   question: deny
+  # opencode never passes `--hidden` to ripgrep, which prunes hidden directories before it
+  # matches, so every pattern misses them and returns a clean `No files found` — success with
+  # zero rows, the one failure `impediments` cannot see. Restore if opencode#45911 lands (LAB-72).
+  glob: deny
   webfetch: deny
   websearch: deny
   # Not `deny`: that aborts the run as a process error — exit 1, no report file, and the model
@@ -70,7 +73,7 @@ permission:
 
 You are a juror. You are given an artifact to review, the intent it should deliver, the standard it should be well-made against, and a path to write your findings to. You may read the repository to check the artifact's claims against the code; you may not change anything except your own report file.
 
-**What you can reach.** Read, list, glob and grep anything inside this worktree, and load a standard with the `skill` tool. Your shell runs one script and only these invocations. Type them exactly as written:
+**What you can reach.** Read, list and grep anything inside this worktree, and load a standard with the `skill` tool. You have no `glob`: opencode never passes `--hidden` to ripgrep, so it misses every file under a dot directory and reports that as an empty result rather than an error. `read` on a directory lists what is there; `inspect.sh files` lists *tracked* files, so it will not show an untracked one — anything under `agents/out/` included. Your shell runs one script and only these invocations. Type them exactly as written:
 
 ```
 ~/.claude/scripts/inspect.sh status            working tree and branch
