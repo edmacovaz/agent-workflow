@@ -11,7 +11,7 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 
 - **roadmap** — review and groom the backlog; shape and prioritise issues (builds on `write-issue`).
 - **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet. Read-only — no branch, no changes.
-- **start-work** — the gate between planning and coding: verify the worktree Orca created is for this issue, bring its base up to date, set it up (deps + secrets), orient, mark In Progress. Cuts nothing.
+- **start-work** — verify the worktree Orca created is for this issue, bring its base up to date, set it up (deps + secrets), orient, mark In Progress, and start implementing the plan. Cuts nothing.
 - **code** — no skill of its own; the agreed plan + the conventions below (comments, commit messages) + the project's AGENTS.md (principles, stack, test strategy) + the built-in `/verify` and `/run` carry it.
 - **review** — review the diff before shipping (the `review-changes` skill): judge it against the issue's intent, audit AGENTS.md conformance, and wrap the built-in `/code-review` / `/simplify`. Non-side-effecting, so run it in multiple passes.
 - **open-pr** — commit, push, open the PR, set the issue to In Review.
@@ -68,7 +68,7 @@ Orca names the branch after the worktree (`edmacovaz/<name>`), so it carries the
 The flow, all inside that one worktree:
 
 - **`/plan`** — read-only against the code as it stands. No branch, no changes.
-- **`/start-work`** — confirms the worktree is for this issue, fetches and reports how far its base has drifted from `baseRef` (advancing it only by fast-forward merge, and only with a clean tree), binds the worktree to the issue, then runs the project's install + secrets setup (`node_modules` isn't shared between worktrees). Coding starts after this.
+- **`/start-work`** — confirms the worktree is for this issue, fetches and reports how far its base has drifted from `baseRef` (advancing it only by fast-forward merge, and only with a clean tree), binds the worktree to the issue, then runs the project's install + secrets setup (`node_modules` isn't shared between worktrees), and starts implementing the plan.
 
 Guardrails:
 - The agent works only in the worktree the session is anchored to; a global hook blocks edits to a *different* worktree of the same repo (see the worktree-anchoring memory). Anchor absolute Read/Edit paths to the worktree root.

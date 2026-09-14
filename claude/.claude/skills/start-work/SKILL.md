@@ -1,12 +1,12 @@
 ---
 name: start-work
-description: The gate between planning and coding a Linear issue — verify the worktree Orca already created, bring its base up to date, and prepare it. Use after /plan, when you're ready to start changes. Not for planning — that's /plan. Never creates worktrees, never cuts or renames a branch.
+description: Verify the worktree Orca already created for a Linear issue, bring its base up to date, prepare it, and start implementing the agreed plan. Use after /plan, when you're ready to start changes. Not for planning — that's /plan. Never creates worktrees, never cuts or renames a branch.
 disable-model-invocation: true
 ---
 
 Start work on Linear issue: $ARGUMENTS
 
-Run this after `/plan` has agreed a plan on the issue. `/plan` ran read-only; `start-work` confirms where you are, brings the base up to date, prepares the environment, and hands off to coding.
+Run this after `/plan` has agreed a plan on the issue. `/plan` ran read-only; `start-work` confirms where you are, brings the base up to date, prepares the environment, and starts implementing the plan.
 
 **Orca owns placement.** The worktree and its branch already exist — Orca created them. This skill verifies and prepares what is there. It never runs `orca worktree create`, never cuts a branch, and never renames Orca's branch.
 
@@ -23,6 +23,8 @@ A step may not cite another step as its condition — the reduced path below ski
 
 ### 1. Read the issue
 Fetch the issue by identifier (from $ARGUMENTS, or ask) via the Linear MCP. Take its title, description, and current status. The plan agreed in `/plan` is on the description — read it; it is what you are about to build.
+
+**Where the description carries no plan, stop and say so** — run `/plan` first. This skill builds from a plan it did not write; without one there is nothing to build and nothing to judge the work against. Stopping here leaves git untouched and the issue's status where it was.
 
 ### 2. Establish placement
 Orca is the authority. From the record above, take `path`, `branch`, `baseRef`, `displayName`, `isMainWorktree`, and `linkedLinearIssue`.
@@ -85,8 +87,8 @@ Move the issue to its started state via the Linear MCP (skip where it is already
 
 **Only where placement was confirmed** — either this worktree was confirmed to be the issue's, or the repo's policy says no worktree is expected. Never flip the status of an issue you have bounced back to the user.
 
-### 10. Hand off
-Report where you are, which authority said so, and what the base drift was. Start implementing per the plan recorded on the issue.
+### 10. Report, then build
+Report where you are, which authority said so, and what the base drift was. Then, in the same turn, start on the first change the plan names. Invoking `start-work` is the instruction to proceed, and the plan on the issue is what you build from.
 
 ## Repos worked on `main`
 

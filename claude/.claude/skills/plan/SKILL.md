@@ -38,10 +38,10 @@ Finish by moving the issue to the status that means *planned, not started* — `
 
 The description and the status are two acts, not one. A description can be rewritten; a status is a signal to everyone and everything watching the board. So it moves last, and only once the plan itself is on the issue.
 
-### 5. Hold the gate
-Do not edit, create, or delete any code until the plan is agreed and recorded on the issue, and the user has explicitly said to proceed. A vague "ok" is enough — but the conversation and the recorded plan must come first.
+### 5. Stop at planned
+This skill ends at a planned issue: the plan recorded on the issue, the status at planned. It writes no code — implementation is `/start-work`, which builds from the plan this skill records.
 
-**The gate is not only about code.** Writing the plan to the issue and moving its status are outward-facing changes to shared state, so step 4 is itself gated: it needs agreement to *the plan*, which is not the same as agreement to the findings behind it. Reading "not code, therefore free" is how a proposal gets committed before it has been approved — and the leniency above is about starting work, not about the write.
+**The gate is not only about code.** Writing the plan to the issue and moving its status are outward-facing changes to shared state, so step 4 is itself gated: it needs agreement to *the plan*, which is not the same as agreement to the findings behind it. Reading "not code, therefore free" is how a proposal gets committed before it has been approved.
 
 ## Known gotchas
 
