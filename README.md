@@ -13,7 +13,8 @@ Project context for agents working here is in `AGENTS.md`.
 | `opencode` | `~/.config/opencode/opencode.jsonc`, `~/.config/opencode/agents/`, `~/.config/opencode/plugins/` |
 
 `~/.claude/settings.json` and `~/.claude/CLAUDE.md` are **not** here — they are personal
-configuration and stay in `dotfiles`, which stows into the same `~/.claude/` directory.
+configuration and stay in [`dotfiles`](https://github.com/edmacovaz/dotfiles) (cloned to
+`~/dotfiles`), which stows into the same `~/.claude/` directory. Nothing here depends on it.
 Everything else in `~/.claude/` (sessions, memory, history, cache) is unmanaged, as is
 opencode's plugin runtime in `~/.config/opencode/` (`node_modules`, `package*.json`, locks).
 
