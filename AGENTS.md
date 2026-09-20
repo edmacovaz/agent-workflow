@@ -1,4 +1,4 @@
-# agents
+# agent-workflow
 
 ## What this repo is
 
@@ -22,9 +22,9 @@ to the *main checkout*, never to your worktree:
 
 | Loaded path | Resolves to |
 | --- | --- |
-| `~/.claude/skills/<name>` | `~/Documents/Code/agents/claude/.claude/skills/<name>` |
-| `~/.claude/rules`, `~/.claude/scripts`, `~/.claude/hooks` | `~/Documents/Code/agents/claude/.claude/…` |
-| `~/.config/opencode/agents`, `opencode.jsonc`, `plugins` | `~/Documents/Code/agents/opencode/.config/opencode/…` |
+| `~/.claude/skills/<name>` | `~/Documents/Code/agent-workflow/claude/.claude/skills/<name>` |
+| `~/.claude/rules`, `~/.claude/scripts`, `~/.claude/hooks` | `~/Documents/Code/agent-workflow/claude/.claude/…` |
+| `~/.config/opencode/agents`, `opencode.jsonc`, `plugins` | `~/Documents/Code/agent-workflow/opencode/.config/opencode/…` |
 
 So a skill, script or agent file edited in a worktree is not what any session loads, including
 the session editing it. Run this repo's own code **by path from the worktree root** —

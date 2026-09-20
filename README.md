@@ -1,4 +1,4 @@
-# agents
+# agent-workflow
 
 The agent loop — the jury runner, the juror agent, and the skills that carry the development
 lifecycle. Delivered to `~` with [GNU Stow](https://www.gnu.org/software/stow/).
@@ -30,9 +30,9 @@ brew install stow
 **Clone and stow:**
 
 ```bash
-git clone git@github.com:edmacovaz/agents.git ~/Documents/Code/agents
+git clone git@github.com:edmacovaz/agent-workflow.git ~/Documents/Code/agent-workflow
 mkdir -p ~/.claude/skills
-cd ~/Documents/Code/agents
+cd ~/Documents/Code/agent-workflow
 stow claude opencode
 ```
 
@@ -49,7 +49,7 @@ Stow the two repos in either order once that directory exists.
 Create it under the matching package path, then re-stow:
 
 ```bash
-mkdir -p ~/Documents/Code/agents/claude/.claude/skills/<name>
+mkdir -p ~/Documents/Code/agent-workflow/claude/.claude/skills/<name>
 # write SKILL.md
 stow claude
 ```

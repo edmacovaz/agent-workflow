@@ -1,4 +1,4 @@
-# agents
+# agent-workflow
 
 Project context is in AGENTS.md — layout, how work happens here, the juror's permissions,
 testing. Read it before working here.
