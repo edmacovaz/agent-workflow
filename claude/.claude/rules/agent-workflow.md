@@ -1,6 +1,3 @@
-- ALWAYS flag what's based on memory or inference when referring to the state of code or infrastructure
-- ALWAYS answer or respond to requests first, add any new learnings or follow up questions afterwards
-
 # Working conventions
 
 ## Spec-driven workflow
@@ -75,30 +72,3 @@ Guardrails:
 - If a session isn't in the intended worktree, switch into an existing one with `EnterWorktree` (`path: …`); still don't *create* one.
 - Don't touch an *unrelated* worktree (one that isn't for the issue at hand).
 - A repo overrides all of this in its AGENTS.md under `## How work happens here` — for example, declaring that it's worked on `main` in the main checkout. Where that policy and the session's actual placement disagree, `/start-work` stops and asks.
-
-# Infrastructure (cross-project)
-
-- **Function-shaped web apps** (static/SSR, no persistent process) → **Vercel**
-- **Server-shaped backends** (persistent process, global state, queue workers) → **Fly.io** (decision record: STE-238)
-- **Agents and background jobs** → **Trigger.dev**; use its platform features (queue concurrency limits, failure alerts, scheduled sweepers, durable waits) over hand-rolled equivalents
-- **Secrets** → **Doppler** as single source of truth, one-way fan-out to runtimes
-- **Postgres** → **Neon**; branches for migration rehearsal and backfill staging
-- **Agent observability** → **Langfuse** (traces, evals) + **PostHog** (errors, analytics)
-
-If the code you're working on doesn't match: check what it actually runs rather than assuming, and plan work to move toward these targets. If a plan would build further on a platform not listed here, flag the mismatch and get confirmation first.
-
-# User environment
-
-## CLI tools
-
-- `gh` (GitHub CLI) is at `/opt/homebrew/bin/gh` — use this full path, it is not on the default PATH in Claude Code sessions.
-- `tailscale` CLI ships inside the macOS app bundle at `/Applications/Tailscale.app/Contents/MacOS/Tailscale` — use this full path, it is not on PATH. (The user has an interactive-shell alias in `~/.zshrc`, but that isn't visible to non-interactive tool shells.)
-- `limactl` (Lima) is at `/opt/homebrew/bin/limactl` — not on the default PATH.
-- For `.claude/launch.json` (used by `preview_start`), processes are spawned directly without shell init. Use `/bin/sh` with an explicit `cd` to the project root (required for worktrees — getcwd fails otherwise) and `. ~/.zshenv` to load fnm: `{ "runtimeExecutable": "/bin/sh", "runtimeArgs": ["-c", "cd /absolute/path/to/project && . ~/.zshenv && <the project's dev script>"] }`. The `launch.json` is gitignored so the hardcoded path is fine.
-- `node_modules` is not shared between worktrees, so a fresh worktree needs the project's install run before its dev server will work — using whichever manager the lockfile indicates.
-
-If a CLI tool isn't found on PATH, check `/opt/homebrew/bin/` before searching elsewhere. If found, use the full path and add it to this file for future sessions.
-
-## Sandbox VM
-
-A Lima `vz` VM (`sandbox`) runs Claude Code with permissions bypassed, filesystem-isolated from the host, driven from Zed over SSH (`lima-sandbox`). Setup, rebuild, connect, and adding MCP: use the `sandbox` skill. Zed's remote + bypass config persists in dotfiles (`zed/.config/zed/settings.json`).
