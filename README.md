@@ -34,8 +34,13 @@ brew install stow
 git clone git@github.com:edmacovaz/agent-workflow.git ~/Documents/Code/agent-workflow
 mkdir -p ~/.claude/skills
 cd ~/Documents/Code/agent-workflow
-stow claude opencode
+stow -t ~ claude opencode
 ```
+
+**`-t ~` is required, and its absence fails silently.** Stow's default target is the *parent of
+the stow directory* — which is `~` only for a repo cloned directly into `~`. From
+`~/Documents/Code/agent-workflow` the default is `~/Documents/Code`, so a bare `stow claude
+opencode` installs the whole loop there, reports success, and leaves `~` untouched (LAB-79).
 
 **The `mkdir` is required, not tidiness.** `dotfiles` contributes the `sandbox` skill to the
 same `~/.claude/skills/`, and stow will not install a second package into a directory another
