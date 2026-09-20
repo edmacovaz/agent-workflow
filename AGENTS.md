@@ -1,30 +1,41 @@
-# dotfiles
+# agents
 
 ## What this repo is
 
-Two things live here: **machine configuration** managed with GNU Stow (see `README.md`
-for packaging), and **the agent loop** — the jury runner, the juror agent, and the skills
-that carry the development lifecycle. Both are ordinary commits, which is why the loop is
-built here rather than somewhere less revertible.
+**The agent loop** — the jury runner, the juror agent, the plugins that run inside a juror's
+process, and the skills that carry the development lifecycle. It is delivered by GNU Stow (see
+`README.md` for packaging), so everything here is an ordinary commit and every change is
+revertible.
+
+It used to live in `dotfiles`, beside personal zsh, git and Zed configuration. Repos that consume
+the loop should not have to depend on that, which is why it moved (LAB-79). Machine configuration
+stayed behind; the sandbox VM and its skill went with it, as personal machine tooling rather than
+part of the loop.
 
 ## How work happens here
 
 **One Orca worktree per issue**, the usual convention. This section states no override, so
-`start-work` applies that default. It used to declare the opposite — work on `main`, in the main
-checkout — and what that rule was really protecting is written out below instead (LAB-65).
+`start-work` applies that default.
 
 **Nothing here is live until it is merged and pushed.** The paths agents actually load resolve
 to the *main checkout*, never to your worktree:
 
 | Loaded path | Resolves to |
 | --- | --- |
-| `~/.claude/skills`, `~/.claude/scripts` | `~/dotfiles/claude/.claude/…` |
-| `~/.config/opencode/agents`, `opencode.jsonc`, `plugins` | `~/dotfiles/opencode/.config/opencode/…` |
+| `~/.claude/skills/<name>` | `~/Documents/Code/agents/claude/.claude/skills/<name>` |
+| `~/.claude/rules`, `~/.claude/scripts`, `~/.claude/hooks` | `~/Documents/Code/agents/claude/.claude/…` |
+| `~/.config/opencode/agents`, `opencode.jsonc`, `plugins` | `~/Documents/Code/agents/opencode/.config/opencode/…` |
 
 So a skill, script or agent file edited in a worktree is not what any session loads, including
 the session editing it. Run this repo's own code **by path from the worktree root** —
 `python3 claude/.claude/scripts/test_jury.py`, never `~/.claude/scripts/test_jury.py` — or you
 exercise the copy you are not editing.
+
+**And a brand-new file needs a re-stow.** `~/.claude/skills` is a real directory holding one
+symlink per skill, not a single folded symlink, because `dotfiles` still contributes the
+`sandbox` skill to the same directory and two stow trees cannot both fold it (LAB-79). Files
+*inside* an existing skill are live the moment they are pushed; a new skill, or a new rule,
+appears only after `stow claude` runs again.
 
 `juror.md` is the sharpest case, because nothing about it looks path-dependent: `opencode --agent
 juror` resolves the agent from `~/.config/opencode/agents/juror.md` whichever worktree the juror
@@ -35,12 +46,13 @@ opencode prefers a project-local agent over `~/.config/opencode/agents/`.
 
 **`glob` under-reports here, and says nothing.** opencode never passes `--hidden` to ripgrep,
 which prunes hidden directories before it matches — so *every* pattern misses them, not only one
-naming a dot directory: `**/*.md` returns 5 of this repo's 30. A stow tree keeps 41 of 47 files
-under `.claude`, `.config` or a dotfile name. That is success with zero rows rather than an error,
-so no tool reports it and no impediment records it. `git ls-files` is the answer that holds in any
-session. The juror is given no `glob` at all (LAB-72); Claude sessions still have one.
+naming a dot directory. It is worse here than it was in `dotfiles`: a stow tree keeps 32 of this
+repo's 35 files under `.claude` or `.config`, so `**/*.md` returns 3 of 27. That is success with
+zero rows rather than an error, so no tool reports it and no impediment records it. `git ls-files`
+is the answer that holds in any session. The juror is given no `glob` at all (LAB-72); Claude
+sessions still have one.
 
-Secrets are never tracked; `README.md` lists what is deliberately excluded.
+Secrets are never tracked.
 
 **Commit is not enough — push.** An unpushed change here won't reach other checkouts or new
 sessions, including ones that would otherwise have loaded this file.
@@ -49,12 +61,12 @@ sessions, including ones that would otherwise have loaded this file.
 
 | Path | Holds |
 | --- | --- |
-| `claude/.claude/skills/` | Skills, symlinked to `~/.claude/skills/`. **User-global** — they run in every repo. |
+| `claude/.claude/skills/` | Skills, symlinked one directory at a time into `~/.claude/skills/`. **User-global** — they run in every repo. |
+| `claude/.claude/rules/` | `agent-workflow.md` — the spec-driven lifecycle and the conventions that carry it, loaded unconditionally in every repo from `~/.claude/rules/` (LAB-79). |
 | `claude/.claude/scripts/` | `jury.py` (the panel runner), its `test_jury.py`, `test_no_retry.mjs` (the juror plugin's suite — kept here rather than beside the plugin, because opencode loads every file in a plugin directory as a plugin), and `inspect.sh` — the fixed read-only verbs a juror's shell is limited to. |
-| `claude/.claude/CLAUDE.md` | Global user instructions. Applies everywhere; merely stored here. |
+| `claude/.claude/hooks/` | `worktree-anchor-guard.sh`, a PreToolUse hook that blocks an edit aimed at a different worktree of the same repo. Invoked by `~/.claude/settings.json`, which `dotfiles` owns — the one reference that crosses the repo boundary (LAB-79). |
 | `opencode/.config/opencode/` | `agents/juror.md`, `opencode.jsonc`, and `plugins/` — hooks that run inside a juror's own process, currently `no-retry.js` (LAB-71). |
-| `agents/in`, `agents/out` | Jury packs, juror reports, and each run's `<run>.progress.jsonl`. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. Each holds a `.gitignore` of `*`, so they stay uncommittable in any clone rather than relying on the machine's global git config. |
-| `sandbox-guest/` | Source-only, copied into the sandbox VM by the `sandbox` skill. Never symlinked into the host `~`, so host and VM agents keep separate instruction sets. |
+| `agents/in`, `agents/out` | Jury packs, juror reports, and each run's `<run>.progress.jsonl`. Untracked, and created by the runner relative to the directory it is invoked from. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. |
 
 ## Orchestration
 
@@ -187,3 +199,6 @@ failing test says which decision is being reversed rather than just going red.
 Specs and plans live on Linear issues, not in repo markdown. The decision record behind the
 loop — why review is cross-vendor, the panel's calibration target, the containment threat
 model — lives on the **Loop engineering** project.
+
+Machine configuration lives in `dotfiles`, which also keeps the `sandbox` skill and the
+`~/.claude/settings.json` that invokes this repo's hook.

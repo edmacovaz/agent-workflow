@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 Open a PR for the current branch. This is the shipping path — it assumes the diff has already been reviewed with `/review-changes`. If it hasn't, run `/review-changes` first.
 
-This opens a PR for the **current repo's** branch only — every step below reads the current working directory. If an issue's work spans multiple repos/branches (e.g. app code plus a dotfiles skill change), run this once from each repo.
+This opens a PR for the **current repo's** branch only — every step below reads the current working directory. If an issue's work spans multiple repos/branches (e.g. app code plus a skill change in the `agents` repo), run this once from each repo.
 
 ## Current state
 - Branch: !`git branch --show-current`

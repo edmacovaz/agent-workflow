@@ -1,32 +1,23 @@
-# dotfiles
+# agents
 
-Personal dotfiles managed with [GNU Stow](https://www.gnu.org/software/stow/).
+The agent loop — the jury runner, the juror agent, and the skills that carry the development
+lifecycle. Delivered to `~` with [GNU Stow](https://www.gnu.org/software/stow/).
+
+Project context for agents working here is in `AGENTS.md`.
 
 ## Packages
 
 | Package | Tracks |
 |---------|--------|
-| `claude` | `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, `~/.claude/skills/` |
-| `git`    | `~/.gitconfig`, `~/.config/git/ignore` |
-| `opencode` | `~/.config/opencode/opencode.jsonc`, `~/.config/opencode/agents/`, `~/.config/opencode/commands/`, `~/.config/opencode/plugins/`, `~/.config/opencode-sandbox/config.json` |
-| `zsh`    | `~/.zshenv`, `~/.zprofile`, `~/.zshrc` |
-| `zed`    | `~/.config/zed/keymap.json`, `~/.config/zed/settings.json` |
+| `claude` | `~/.claude/skills/` (one symlink per skill), `~/.claude/rules/`, `~/.claude/scripts/`, `~/.claude/hooks/` |
+| `opencode` | `~/.config/opencode/opencode.jsonc`, `~/.config/opencode/agents/`, `~/.config/opencode/plugins/` |
 
-Everything else in `~/.claude/` (sessions, memory, history, cache) is unmanaged.
-Likewise unmanaged: opencode's plugin runtime in `~/.config/opencode/` (`node_modules`, `package*.json`, locks).
-Secrets are deliberately **not** tracked — notably `~/.config/gh/` (GitHub OAuth tokens).
+`~/.claude/settings.json` and `~/.claude/CLAUDE.md` are **not** here — they are personal
+configuration and stay in `dotfiles`, which stows into the same `~/.claude/` directory.
+Everything else in `~/.claude/` (sessions, memory, history, cache) is unmanaged, as is
+opencode's plugin runtime in `~/.config/opencode/` (`node_modules`, `package*.json`, locks).
 
-`sandbox-guest/` is **not** a stow package — it's source-only, copied into the sandbox VM by
-the `sandbox` skill's `rebuild.sh`. `agent/` (orientation `CLAUDE.md` + VM-native skills) lands
-in the VM's `~/.claude/`; `git-hooks/` (a pre-push backstop that blocks `main`) lands in
-`~/.git-hooks/`. It never symlinks into the host `~`, so the host and VM agents keep separate
-instruction sets. Tokens are injected at rebuild time from Doppler (`sandbox/dev`), never committed here.
-
-The `git` package's `~/.config/git/ignore` carries `**/.claude/settings.local.json`,
-which keeps machine-local Claude Code permission files out of every repo.
-
-> **Note:** these configs hard-code Apple Silicon paths (`/opt/homebrew`) and the
-> Tailscale.app bundle, so they assume a macOS / Apple Silicon machine.
+Secrets are never tracked.
 
 ## Setup on a new machine
 
@@ -39,19 +30,29 @@ brew install stow
 **Clone and stow:**
 
 ```bash
-git clone git@github.com:edmacovaz/dotfiles.git ~/dotfiles
-cd ~/dotfiles
-stow claude git opencode zsh zed
+git clone git@github.com:edmacovaz/agents.git ~/Documents/Code/agents
+mkdir -p ~/.claude/skills
+cd ~/Documents/Code/agents
+stow claude opencode
 ```
 
-This creates symlinks in `~` pointing into the matching `~/dotfiles/<package>/` directories.
+**The `mkdir` is required, not tidiness.** `dotfiles` contributes the `sandbox` skill to the
+same `~/.claude/skills/`, and stow will not install a second package into a directory another
+stow tree owns as a single folded symlink — it aborts with `existing target is not owned by
+stow`. Creating the directory first makes stow fold one level deeper instead, giving one
+symlink per skill, which is what lets both repos contribute (LAB-79).
 
-## Adding new packages
+Stow the two repos in either order once that directory exists.
 
-Create a directory matching the target structure, then stow it:
+## Adding a skill, rule or script
+
+Create it under the matching package path, then re-stow:
 
 ```bash
-mkdir -p ~/dotfiles/<package>/<path>
-# move files in
-stow <package>
+mkdir -p ~/Documents/Code/agents/claude/.claude/skills/<name>
+# write SKILL.md
+stow claude
 ```
+
+Files *inside* an existing skill are live as soon as they are pushed — the symlink points at the
+directory. A brand-new skill, rule or script is a new symlink, so it needs the re-stow.
