@@ -110,7 +110,7 @@ def test_stale_report_is_never_served_as_this_runs_verdict():
         stale = os.path.join(out, "R.a.alpha.json")
         open(stale, "w").write(json.dumps(_verdict("block")))
         # the juror writes nothing at all, so anything read back came from the stale file
-        _, row, _, _ = headless(m, d, [0], report=None)
+        _, row, _, _, _ = headless(m, d, [0], report=None)
         assert row["parse_ok"] is False, row
         assert "wrote no report" in row["error"], row
 
@@ -119,7 +119,7 @@ def test_unparseable_report_keeps_its_text():
     """A real finding must not vanish with the parse failure that stopped it being counted."""
     m = load()
     with tempfile.TemporaryDirectory() as d:
-        _, row, _, _ = headless(m, d, [0], report="{not json at all")
+        _, row, _, _, _ = headless(m, d, [0], report="{not json at all")
         assert row["parse_ok"] is False, row
         assert "unreadable report" in row["error"], row
         assert row["raw"].startswith("{not json"), row
@@ -215,9 +215,15 @@ def test_output_lands_at_the_repo_root_not_the_cwd():
 def test_progress_reaches_the_caller_during_the_wait():
     """Monitor renders only its own description, so a wake says "something changed" and no
     more.  Before this the only thing a waiting caller could see was which report files had
-    appeared — never that a juror was alive and working."""
+    appeared — never that a juror was alive and working.
+
+    Both halves are asserted since LAB-75 split them: a state change is printed *and* recorded.
+    A split that quietly stopped printing landings too would restore the silence this replaced,
+    and only the stdout assertion below can tell the two apart."""
     j = load(); prev = os.getcwd(); os.chdir(repo())
     try:
+        said = []
+        j.event = lambda msg: said.append(msg)
         j.PROGRESS["path"] = "p.jsonl"
         j.progress("state", "alpha is still reviewing", model="m/alpha",
                    state="ready", heartbeat_age=40, phase=None)
@@ -227,6 +233,28 @@ def test_progress_reaches_the_caller_during_the_wait():
         assert rows[0]["message"] == "alpha is still reviewing", rows
         assert rows[0]["state"] == "ready" and rows[0]["heartbeat_age"] == 40, rows
         assert "phase" not in rows[0], "None fields are noise, not state"
+        assert said == ["alpha is still reviewing", "alpha returned"], said
+    finally:
+        os.chdir(prev)
+
+
+def test_a_recorded_line_reaches_the_file_and_never_the_caller():
+    """A printed line is a conversation turn, and no silence is available once one exists — so
+    a panel printing a heartbeat per juror per minute drew multi-paragraph analyses of a rising
+    counter (LAB-75). The line is still worth keeping, for a stream that was missed or a run
+    that has to be reconstructed, so it goes to the file and stops there."""
+    j = load(); prev = os.getcwd(); os.chdir(repo())
+    try:
+        said = []
+        j.event = lambda msg: said.append(msg)
+        j.PROGRESS["path"] = "p.jsonl"
+        j.record("working", "alpha — running 120s, last read a.md (×3)",
+                 model="m/alpha", phase=None)
+        rows = [json.loads(l) for l in open("p.jsonl")]
+        assert [r["kind"] for r in rows] == ["working"], rows
+        assert "×3" in rows[0]["message"] and rows[0]["model"] == "m/alpha", rows
+        assert "phase" not in rows[0], "None fields are noise, not state"
+        assert said == [], said
     finally:
         os.chdir(prev)
 
@@ -274,7 +302,7 @@ def test_a_malformed_impediment_never_costs_the_verdict():
     assert j.is_report(report), report
 
     with tempfile.TemporaryDirectory() as d:
-        _, row, _, _ = headless(j, d, [0], report=json.dumps(report))
+        _, row, _, _, _ = headless(j, d, [0], report=json.dumps(report))
         assert row["returned"] is True and row["report"]["verdict"] == "pass", row
 
     entries, reported = j.read_impediments(report)
@@ -435,19 +463,22 @@ def headless(m, d, codes, report=None, events="", stderr="", timeout_ms=60000):
     m.opencode_exe = lambda: "opencode"
     m.launch_juror = launch
     m.POLL_S = 0
-    lines = []
-    m.progress = lambda kind, msg, **kw: lines.append((kind, msg))
+    # two channels, captured apart: `said` reached the caller and cost a turn, `wrote` only
+    # reached the progress file. Collapsing them is what hid the heartbeats (LAB-75)
+    said, wrote = [], []
+    m.progress = lambda kind, msg, **kw: said.append((kind, msg))
+    m.record = lambda kind, msg, **kw: wrote.append((kind, msg))
     results = []
     m.run_headless(["m/alpha"], "a.md", "i.md", "plan", out, "R", d, timeout_ms, results)
     res = results[0]
-    return res, res["jurors"][0], lines, made.get("proc")
+    return res, res["jurors"][0], said, wrote, made.get("proc")
 
 
 def test_a_clean_exit_with_a_verdict_is_reported_and_confirmed():
     m = load()
     with tempfile.TemporaryDirectory() as d:
         good = json.dumps({"verdict": "pass", "findings": [], "impediments": []})
-        res, row, _, _ = headless(m, d, [0], report=good)
+        res, row, _, _, _ = headless(m, d, [0], report=good)
         assert row["returned"] and row["parse_ok"], row
         assert res["reported"] == 1 and res["confirmed"] == 1, res
 
@@ -457,7 +488,7 @@ def test_a_clean_exit_without_a_report_is_not_a_verdict():
     the juror this distinguishes, and counting it as a pass is counting silence as approval."""
     m = load()
     with tempfile.TemporaryDirectory() as d:
-        res, row, _, _ = headless(m, d, [0])
+        res, row, _, _, _ = headless(m, d, [0])
         assert row["returned"] and not row["parse_ok"], row
         assert "wrote no report" in row["error"], row
         assert res["confirmed"] == 1 and res["reported"] == 0, res
@@ -466,7 +497,7 @@ def test_a_clean_exit_without_a_report_is_not_a_verdict():
 def test_a_non_zero_exit_carries_its_code_and_its_reason():
     m = load()
     with tempfile.TemporaryDirectory() as d:
-        _, row, _, _ = headless(m, d, [3], stderr="provider refused the request")
+        _, row, _, _, _ = headless(m, d, [3], stderr="provider refused the request")
         assert row["exit"] == 3 and not row["returned"], row
         assert "exited 3" in row["error"] and "provider refused" in row["error"], row
 
@@ -476,10 +507,10 @@ def test_a_juror_killed_at_the_deadline_says_so():
     m = load()
     with tempfile.TemporaryDirectory() as d:
         # a real clock: the deadline has to be short or the suite waits it out (LAB-65)
-        _, row, lines, proc = headless(m, d, [None], timeout_ms=1)
+        _, row, said, _, proc = headless(m, d, [None], timeout_ms=1)
         assert proc.killed, "the deadline must actually kill it"
         assert not row["returned"] and "timeout" in row["error"], row
-        assert any(k == "timeout" for k, _ in lines), lines
+        assert any(k == "timeout" for k, _ in said), said
 
 
 def test_a_wall_survives_the_headless_path_intact():
@@ -489,7 +520,7 @@ def test_a_wall_survives_the_headless_path_intact():
         walled = json.dumps({"verdict": "pass", "findings": [], "impediments": [
             {"tool": "bash", "target": "git status", "kind": "refused",
              "attempts": 4, "refusal": "denied", "purpose": "check the tree"}]})
-        res, row, _, _ = headless(m, d, [0], report=walled)
+        res, row, _, _, _ = headless(m, d, [0], report=walled)
         assert row["parse_ok"] and row["returned"], row
         wall = res["impediments"]["walls"][0]
         assert (wall["tool"], wall["target"], wall["attempts"]) == ("bash", "git status", 4), wall
@@ -513,19 +544,21 @@ def test_a_repeated_call_is_reported_as_repeated():
 
 def test_a_loop_is_reported_and_never_stopped():
     """The old seven-minute cutoff reported working jurors as silent. The deadline stays the
-    only stop rule: a juror repeating itself is described, not killed."""
+    only stop rule: a juror repeating itself is described, not killed — and since LAB-75 it is
+    described to the file rather than to the caller, so the description costs no turn."""
     m = load()
     ev = "\n".join(json.dumps({"part": {"type": "tool", "tool": "bash",
                                         "state": {"input": {"command": "ls"}}}})
                    for _ in range(9))
     with tempfile.TemporaryDirectory() as d:
         m.REPORT_EVERY_S = 0
-        _, row, lines, proc = headless(m, d, [None, None, 0],
-                                       report=json.dumps({"verdict": "pass", "findings": []}),
-                                       events=ev)
+        _, row, said, wrote, proc = headless(
+            m, d, [None, None, 0],
+            report=json.dumps({"verdict": "pass", "findings": []}), events=ev)
         assert not proc.killed, "a repeating juror must not be killed"
         assert row["returned"] and row["parse_ok"], row
-        assert any(k == "working" and "×9" in msg for k, msg in lines), lines
+        assert any(k == "working" and "×9" in msg for k, msg in wrote), wrote
+        assert not any(k == "working" for k, _ in said), said
 
 
 def test_a_quiet_juror_is_quiet_and_not_stuck():

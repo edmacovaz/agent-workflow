@@ -56,13 +56,20 @@ Monitor(command: "python3 ~/.claude/scripts/jury.py --artifact <a> --intent <i> 
         description: "<ISSUE> jury panel", persistent: true)
 ```
 
-**`persistent: true`, not a `timeout_ms`.** The default is five minutes and the maximum is sixty, while the runner's own backstop is thirty minutes *per artifact* — so a two-artifact panel can outlive any value you are allowed to pass. Stopping the runner is worse than it sounds. `jury.py` catches SIGTERM and turns it into an exit, so a `TaskStop` still kills the jurors and writes `<run>.jury-result.json` — but nothing in-process survives a SIGKILL, and a runner killed that way leaves `opencode run` children spending tokens with every verdict on disk orphaned. Prefer `TaskStop` when the panel settles; do not `kill -9` a panel. Never background the run with a separate watch on the progress file: that sends the lines to a file nobody is reading, which is how a panel goes silent for ten minutes and the caller learns nothing until it ends.
+**`persistent: true`, not a `timeout_ms`.** The default is five minutes and the maximum is sixty, while the runner's own backstop is thirty minutes *per artifact* — so a two-artifact panel can outlive any value you are allowed to pass. Stopping the runner is worse than it sounds. `jury.py` catches SIGTERM and turns it into an exit, so a `TaskStop` still kills the jurors and writes `<run>.jury-result.json` — but nothing in-process survives a SIGKILL, and a runner killed that way leaves `opencode run` children spending tokens with every verdict on disk orphaned. Prefer `TaskStop` when the panel settles; do not `kill -9` a panel. Never background the run with a separate watch on the progress file: the landings would go to a file nobody is reading, and the caller would learn nothing until the run ended.
 
 Each juror is a bounded `opencode run` that exits when it is done.
 
 Then say what you started — `4 jurors dispatched`. **Offer no time.**
 
-**Each event carries the runner's own line.** The caller has already seen it, so add what it means rather than repeating it, and never let a run pass in silence — **a run must never produce zero output.** Report state as it changes, not only reports as they land. `agents/out/<run>.progress.jsonl` holds the same lines as a record, for a stream that was missed or a run that crashed. Follow `references/dispatch-mechanics.md` for the line format and for which `agents/out/<run>.*` files are juror reports.
+**While the panel runs, stay out of its way.** Every event you get is a change of state — a report landing or the run settling. Heartbeats go to the progress file and never reach you, so a quiet stretch is the panel working, not a panel to comment on.
+
+- **One line per landing and nothing else**: the model, returned or absent, and the count against the panel size. The caller has already seen the runner's own line, so do not repeat it.
+- **No analysis, arithmetic, trajectory or prediction** off any line.
+- **No unsolicited intervention.** Never offer `TaskStop`, never raise cost, never propose taking 3 of 4. Only when asked.
+- **Open no juror report — `<run>.<artifact>.<model>.json` — until `<run>.jury-result.json` exists.** The settle file carries every juror's full report, so opening one individually is never necessary and always premature. Reading them in arrival order turns four independent reads into a sequential one anchored on whichever juror was fastest — a `pass` at 45s and a `block` at 400s carry equal weight. This names the *reports*, not the whole directory: `<run>.progress.jsonl` lives there too, and it is the only record of a run whose stream was missed or that died before it could settle.
+
+`agents/out/<run>.progress.jsonl` holds every line, landings and heartbeats alike, as a record — for a stream that was missed or a run that crashed. Follow `references/dispatch-mechanics.md` for the line format and for which `agents/out/<run>.*` files are juror reports.
 
 `<run>.jury-result.json` means the run has settled; read it and go to step 4. It is written even when the run crashes — but if Monitor exits and it never appears, the run died before it could write one. Report that; do not keep waiting.
 
@@ -71,13 +78,6 @@ Then say what you started — `4 jurors dispatched`. **Offer no time.**
 Findings **attributed and unpooled**, with how many reported. Keep `reported` (a verdict is on disk) apart from `confirmed` (the juror also reported done): a juror with one and not the other is named as such rather than counted present or absent.
 
 Each result also carries `impediments` — the walls the panel hit. Report them **apart from the findings and never as one**: a wall is telemetry about the room we built, and it never moves a verdict. `walls` counts jurors rather than calls — `attempts` is the call count, and a wall whose attempts dwarf its jurors is one a juror kept retrying — `silent` names jurors that did not answer the question at all, and a panel with no walls and nobody silent is a room that worked.
-
-A progress line ending in `×N` says a juror has made that exact call N times during the review —
-not necessarily in a row, and not necessarily a loop: re-checking a file looks identical from out
-here. It is a count, not a diagnosis. The runner reports it and goes on waiting, because the
-timeout is the only thing that stops a juror. A large N on a cheap call is worth your attention;
-deciding what it means is yours, not the runner's. Say what it was doing and let the caller
-choose. A juror reported as quiet is quiet, not stuck: one long model call looks the same from here.
 
 If the results carry an `error` the run crashed: say so plainly, and present any `salvaged` verdicts as a partial recovery rather than the panel's answer. Never read silence as agreement, nor present a jury nobody reported to as a pass. Keep the dimensions apart: `fit` says the work is wrong, `form` says it is badly made.
 

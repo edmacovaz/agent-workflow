@@ -5,15 +5,25 @@ files under `agents/out/` are juror reports.
 
 ## What a Monitor event carries
 
-The runner's line itself, verbatim. This file said the opposite until 12 Sep 2026, and the
-progress file below was built to work around a constraint that measurement showed is not there
-(LAB-65) — so run the panel *as* the Monitor command and let it speak for itself.
+The runner's line itself, verbatim — so run the panel *as* the Monitor command and let it speak
+for itself. This file said the opposite until 12 Sep 2026, and the progress file below was built
+to work around a constraint that measurement showed is not there (LAB-65).
+
+**Only the changes worth a turn are printed**: the dispatch, each report landing or absence, the
+walls, and the settle. A heartbeat is written to the progress file and never printed, because a
+printed line *is* a conversation turn and no silence is available once one exists (LAB-75). So a
+quiet stretch is a panel working, and there is nothing to say about it.
+
+The line is for the caller's eyes; they have already read it. A landing gets an acknowledgement —
+the model, returned or absent, and the count against the panel size. A heartbeat gets nothing,
+because you will not see one. Neither gets a reading.
 
 ## Reading the progress file
 
-`agents/out/<run>.progress.jsonl` holds the same lines, appended and flushed as they are printed.
-It is the record, not the channel: read it when the stream was missed, when a run is picked up
-from another session, or when a crash has to be reconstructed afterwards. The lines look like:
+`agents/out/<run>.progress.jsonl` holds every line, appended and flushed as it happens — the
+printed ones and the heartbeats that are not printed. It is the record, not the channel: read it
+when the stream was missed, when a run is picked up from another session, or when a crash has to
+be reconstructed afterwards. The lines look like:
 
 ```
 glm-5.3-flash returned in 214s — 1 of 4

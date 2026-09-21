@@ -14,8 +14,10 @@ def event(msg):
     the caller sees, verbatim — measured 12 Sep 2026, against a long-standing belief that only
     Monitor's own description ever reached them (LAB-65).
 
-    The rule is one line per change and nothing between changes: a line the caller cannot
-    account for is the noise, and no line at all is the silence this replaced."""
+    Printing is not free. Monitor turns every line into a conversation turn, and once one is
+    printed no silence is available — so this is reserved for the changes worth waking someone
+    for: a dispatch, a landing, a wall, a settle. What a juror is doing *between* changes goes
+    to record() instead, which is what stopped a panel costing a turn per heartbeat (LAB-75)."""
     print(msg, flush=True)
 
 
@@ -24,19 +26,16 @@ def event(msg):
 PROGRESS = {"path": None}
 
 
-def progress(kind, message, **fields):
-    """One caller-facing line: printed to wake Monitor, and appended to the run's progress
-    file so that *what* changed can actually reach the caller.
+def record(kind, message, **fields):
+    """Append one line to the run's progress file, saying nothing to the caller.
 
-    Before this, the only thing a waiting caller could see was which report files had appeared —
-    never that a juror was alive and working, which is the one thing they are waiting to know.
-    Iteration 1 removed the false "time remains" signal without adding the true one. The file is
-    the record; stdout is the channel, and a run that only writes the file goes silent.
+    Split out from progress() so that a line worth keeping is not forced to also be worth a
+    conversation turn (LAB-75). The file is the record; stdout is the channel, and they are no
+    longer the same decision.
 
-    Flushed per line: a buffered write would leave the caller watching an empty file until
-    the run ended, which is the silence this replaces. A progress line is never worth ending
-    a run for, so a write that fails is dropped."""
-    event(message)
+    Flushed per line: a buffered write would leave anyone reading the file watching an empty one
+    until the run ended. A progress line is never worth ending a run for, so a write that fails
+    is dropped."""
     path = PROGRESS["path"]
     if not path:
         return
@@ -48,6 +47,19 @@ def progress(kind, message, **fields):
             fh.flush()
     except OSError:
         pass
+
+
+def progress(kind, message, **fields):
+    """One caller-facing line: printed to wake Monitor, and recorded in the run's progress file.
+
+    Before this, the only thing a waiting caller could see was which report files had appeared —
+    never that a juror was alive and working, which is the one thing they are waiting to know.
+    Iteration 1 removed the false "time remains" signal without adding the true one.
+
+    Everything that changes the panel's state comes through here. What a juror is doing between
+    those changes goes to record() alone."""
+    event(message)
+    record(kind, message, **fields)
 
 # Four distinct families, deliberately. `ox-alpha-free` sat here for five runs and does
 # not exist: opencode fell back to the agent's declared model, so the panel was luna twice
@@ -72,8 +84,9 @@ DEFAULT_TIMEOUT_MS = 1800000
 # came to report working jurors as silent — see DEFAULT_TIMEOUT_MS.
 POLL_S = 5
 
-# How often a juror still running is reported on. Long enough that the whole panel's chatter
-# does not bury the reports it sits among, short enough that a caller is never left wondering.
+# How often a juror still running is written to the progress file. Paces the file alone: since
+# LAB-75 these lines are never printed, so the old reason — not burying the reports they sat
+# among — no longer applies, and nothing the caller sees is on this interval.
 REPORT_EVERY_S = 60
 
 
@@ -488,9 +501,9 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
     if pending:
         progress("dispatched", f"{len(pending)} juror{'s' * (len(pending) != 1)} dispatched")
 
-    spoke = time.monotonic()
+    wrote = time.monotonic()
     try:
-        wait_out(jurors, pending, deadline, spoke, len(models))
+        wait_out(jurors, pending, deadline, wrote, len(models))
     finally:
         # every juror dispatched gets a row and every child gets killed, however the wait
         # ended: a result that omits them reads as a smaller panel that did better than it did.
@@ -514,7 +527,7 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
         announce_walls(name, impeded, len(jurors), reported)
 
 
-def wait_out(jurors, pending, deadline, spoke, total=None):
+def wait_out(jurors, pending, deadline, wrote, total=None):
     """Wait on the jurors, appending each into `jurors` as its process ends. The deadline is the
     only stop rule; everything read from an event stream is reported and never acted on.
 
@@ -541,11 +554,13 @@ def wait_out(jurors, pending, deadline, spoke, total=None):
                      model=juror["model"])
             jurors.append(row)
         pending[:] = still
-        if pending and now - spoke >= REPORT_EVERY_S:
+        if pending and now - wrote >= REPORT_EVERY_S:
             for juror in pending:
-                progress("working", working_line(juror["model"], juror, now),
-                         model=juror["model"])
-            spoke = now
+                # file only: a heartbeat printed is a conversation turn, and a panel that
+                # took one per juror per minute buried its own reports in commentary (LAB-75)
+                record("working", working_line(juror["model"], juror, now),
+                       model=juror["model"])
+            wrote = now
 
 
 def announce_walls(name, impeded, attempted, reported):
