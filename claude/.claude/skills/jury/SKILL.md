@@ -62,6 +62,8 @@ Each juror is a bounded `opencode run` that exits when it is done.
 
 Then say what you started — `4 jurors dispatched`. **Offer no time.**
 
+**Check the caller can actually see the panel.** Their view of it is the status line, which renders `agents/out/<run>.progress.jsonl` in place and costs no turn (LAB-86). Read `~/.claude/settings.json` and confirm `statusLine.command` still names `statusline.py`. Orca rewrites that file in place on upgrade — `dotfiles` commit `3635996` is that event on the record — and the failure is silent: the display stops existing while the panel runs exactly as before. Where it has been clobbered, say so in one line and go on with the panel; restoring it is a `dotfiles` change, not something to do mid-run.
+
 **While the panel runs, stay out of its way.** Every event you get is a change of state — a report landing or the run settling. Heartbeats go to the progress file and never reach you, so a quiet stretch is the panel working, not a panel to comment on.
 
 - **One line per landing and nothing else**: the model, returned or absent, and the count against the panel size. The caller has already seen the runner's own line, so do not repeat it.
