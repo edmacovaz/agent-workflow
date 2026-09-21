@@ -16,13 +16,19 @@ It is the record, not the channel: read it when the stream was missed, when a ru
 from another session, or when a crash has to be reconstructed afterwards. The lines look like:
 
 ```
-glm-5.3-flash returned in 214s — 1 of 4
+glm-5.3-flash returned in 214s, $0.0535 — 1 of 4
 qwen3.7-plus — running 120s, last read claude/.claude/scripts/jury.py (×3)
+LAB-83.artifact: $0.1719 over 39 steps and 57 calls
 ```
 
-Name the model, say what changed, and give the count against the panel size. A juror still running
-is reported with what it last called — repo-relative, so the part that identifies it survives —
-and `×N` where it has made that exact call N times
+Name the model, say what changed, and give the count against the panel size. A settled juror
+carries what it spent, including one that died — the figure comes from its own event stream, so
+it survives a juror that wrote no verdict, and the panel's own total lands once after the last
+juror settles. A juror still running is reported with what it last called — repo-relative, so
+the part that identifies it survives — and carries no cost, because the line is about what it
+is doing and a running total there is noise. A panel that read no figures at all says
+nothing rather than `$0.0000`, which would be a claim nobody measured. It carries
+`×N` where it has made that exact call N times
 across the review, which is a count and not a verdict — ordinary re-checking and a loop look the
 same from out here. Pass it on and let the caller judge. A juror that has called
 nothing yet is reported as such, never as stuck: one long model call looks identical from here.

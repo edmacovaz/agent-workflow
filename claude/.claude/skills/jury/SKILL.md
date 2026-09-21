@@ -79,6 +79,8 @@ timeout is the only thing that stops a juror. A large N on a cheap call is worth
 deciding what it means is yours, not the runner's. Say what it was doing and let the caller
 choose. A juror reported as quiet is quiet, not stuck: one long model call looks the same from here.
 
+Each result also carries `spend` — what the panel cost, each juror's share on its own row beside the seconds it took and the steps and calls it made. Report it **alongside the findings and never as part of them**: cost is telemetry about the room, exactly as a wall is, and a cheap juror's verdict is worth neither more nor less for being cheap. A `cost` of `null` is not `0` — it means no figure was read, so say that rather than "free". A juror's `repeats` names calls it made more than once: a **count, not a price**, because the stream prices steps and never calls. Treat a large one the way you treat `×N` above — worth your attention, yours to interpret.
+
 If the results carry an `error` the run crashed: say so plainly, and present any `salvaged` verdicts as a partial recovery rather than the panel's answer. Never read silence as agreement, nor present a jury nobody reported to as a pass. Keep the dimensions apart: `fit` says the work is wrong, `form` says it is badly made.
 
 ## Known gotchas
