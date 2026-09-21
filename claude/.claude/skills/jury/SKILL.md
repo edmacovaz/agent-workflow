@@ -79,6 +79,8 @@ Findings **attributed and unpooled**, with how many reported. Keep `reported` (a
 
 Each result also carries `impediments` — the walls the panel hit. Report them **apart from the findings and never as one**: a wall is telemetry about the room we built, and it never moves a verdict. `walls` counts jurors rather than calls — `attempts` is the call count, and a wall whose attempts dwarf its jurors is one a juror kept retrying — `silent` names jurors that did not answer the question at all, and a panel with no walls and nobody silent is a room that worked.
 
+Each result also carries `spend` — what the panel cost, each juror's share on its own row beside the seconds it took and the steps and calls it made. Report it **alongside the findings and never as part of them**: cost is telemetry about the room, exactly as a wall is, and a cheap juror's verdict is worth neither more nor less for being cheap. A `cost` of `null` is not `0` — it means no figure was read, so say that rather than "free". A juror's `repeats` names calls it made more than once: a **count, not a price**, because the stream prices steps and never calls. A large one is worth your attention, and deciding what it means is yours rather than the runner's — ordinary re-checking and a loop are indistinguishable from out here.
+
 If the results carry an `error` the run crashed: say so plainly, and present any `salvaged` verdicts as a partial recovery rather than the panel's answer. Never read silence as agreement, nor present a jury nobody reported to as a pass. Keep the dimensions apart: `fit` says the work is wrong, `form` says it is badly made.
 
 ## Known gotchas

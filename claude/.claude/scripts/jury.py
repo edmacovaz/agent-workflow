@@ -6,7 +6,35 @@ report and exits, so completion is the exit and absence is a process fact. Its o
 stream says what it is doing while it works. The deadline is the only thing that stops one —
 a second stop rule racing it is how working jurors came to be reported as silent (LAB-65).
 """
-import argparse, json, os, shutil, signal, subprocess, sys, time
+import argparse, functools, json, math, os, shutil, signal, subprocess, sys, time
+
+
+def never_raises(default=None):
+    """Make "this must not raise" something the code enforces rather than a docstring asking
+    for it.
+
+    Four functions here are read from the wait loop, whose finally kills every juror, and each
+    carried its own hand-written except clause. Three review rounds each found one whose clause
+    did not match reality — a closed stdout raises ValueError, which is not an OSError; a
+    400-digit int from json.loads raises OverflowError out of math.isfinite. Correctness
+    depended on enumerating exception types correctly at fourteen separate sites (LAB-83).
+
+    **Exception, never BaseException.** SIGTERM is turned into SystemExit on purpose, and that
+    has to pass through: swallowing it would leave the panel running with nothing able to stop
+    it, which is the opposite of the failure this guards. KeyboardInterrupt likewise.
+
+    The cost, stated: a genuine bug inside a guarded function returns the default instead of
+    surfacing. These are small boundary readers over another process's output, where that is
+    the right trade; it is not a licence to wrap anything that does real work."""
+    def wrap(fn):
+        @functools.wraps(fn)
+        def guarded(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception:
+                return default
+        return guarded
+    return wrap
 
 
 def event(msg):
@@ -26,6 +54,14 @@ def event(msg):
 PROGRESS = {"path": None}
 
 
+@never_raises()
+def say(message):
+    """The channel. A closed Monitor pipe raises BrokenPipeError and a closed stdout raises
+    ValueError; neither is worth a juror, let alone the panel."""
+    event(message)
+
+
+@never_raises()
 def record(kind, message, **fields):
     """Append one line to the run's progress file, saying nothing to the caller.
 
@@ -35,18 +71,15 @@ def record(kind, message, **fields):
 
     Flushed per line: a buffered write would leave anyone reading the file watching an empty one
     until the run ended. A progress line is never worth ending a run for, so a write that fails
-    is dropped."""
+    is dropped — which `never_raises` now enforces rather than an except clause here (LAB-83)."""
     path = PROGRESS["path"]
     if not path:
         return
     row = {"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": kind, "message": message}
     row.update({k: v for k, v in fields.items() if v is not None})
-    try:
-        with open(path, "a") as fh:
-            fh.write(json.dumps(row) + "\n")
-            fh.flush()
-    except OSError:
-        pass
+    with open(path, "a") as fh:
+        fh.write(json.dumps(row) + "\n")
+        fh.flush()
 
 
 def progress(kind, message, **fields):
@@ -57,8 +90,13 @@ def progress(kind, message, **fields):
     Iteration 1 removed the false "time remains" signal without adding the true one.
 
     Everything that changes the panel's state comes through here. What a juror is doing between
-    those changes goes to record() alone."""
-    event(message)
+    those changes goes to record() alone (LAB-75).
+
+    **Two guards, not one**, and they are two functions rather than two remembered try blocks.
+    A dead channel must not take the record with it: a closed pipe is the very case the record
+    exists for, so one shared guard would discard it exactly when the caller has lost the
+    stream (LAB-83)."""
+    say(message)
     record(kind, message, **fields)
 
 # Four distinct families, deliberately. `ox-alpha-free` sat here for five runs and does
@@ -206,16 +244,74 @@ def impediment_rollup(jurors):
     return rollup
 
 
-def salvage(out, run_id, artifact, models):
+def money(cost):
+    """Four decimals because a panel is cents-scale: at two, the measured panel's $0.0812,
+    $0.0535, $0.0463 and $0.0793 collapse into two figures rather than four (LAB-83)."""
+    return f"${cost:.4f}"
+
+
+def spend_rollup(jurors):
+    """What the panel cost, summed from the rows that carry a figure.
+
+    A juror whose stream said nothing is named in `jurors_without_cost` rather than summed as
+    free — the same distinction the per-juror `cost: null` makes, kept at the panel level so a
+    total can never quietly stand for less than the whole panel."""
+    priced = [number(j.get("cost")) for j in jurors]
+    named = [j["model"] for j, c in zip(jurors, priced) if c is None]
+    rollup = {"cost": round(sum(c for c in priced if c is not None), 6)
+                      if any(c is not None for c in priced) else None,
+              "steps": sum(number(j.get("steps")) or 0 for j in jurors),
+              "calls": sum(number(j.get("calls")) or 0 for j in jurors)}
+    if named:
+        rollup["jurors_without_cost"] = named
+    return rollup
+
+
+# Slack on the staleness check below. mtime is a filesystem clock and `since` is this
+# process's; whole-second granularity or a lagging network mount can date a file this run
+# wrote just before the run began. Judging a fresh verdict stale loses it silently, which is
+# the failure salvage exists to prevent, so the check errs towards keeping (LAB-83 review).
+STALE_SLACK_S = 5
+
+
+def from_this_run(path, since):
+    """Whether a stream was written by this run rather than an earlier one that reused its id.
+
+    Everything else that could go stale is truncated by something: run_headless deletes a
+    previous report, launch_juror opens the stream with "w". Salvage runs on the path where
+    neither happened — a crash before any juror started — and ~/.cache/jury/<run>/ is kept on
+    purpose, so a hand-passed run id can find a whole previous run sitting there. One did:
+    $4.20 reported for a juror that never launched (LAB-83 review)."""
+    try:
+        return os.path.getmtime(path) >= since - STALE_SLACK_S
+    except OSError:
+        return False
+
+
+def salvage(out, run_id, artifact, models, since):
     """Recover verdicts a crashed run already collected. The settle file is the caller's
     only record, and a crash mid-panel would otherwise hand them an empty one
-    sitting next to perfectly good report files."""
+    sitting next to perfectly good report files.
+
+    `since` is when this run began, and both the verdict and its price are held to it. The
+    verdict is the half that matters more: a previous run's report counted in `reported` is a
+    stale verdict passing for this panel's, which is the error run_headless deletes reports to
+    avoid — and this is the one path where that deletion never ran."""
     name = os.path.basename(artifact).replace(".md", "")
+    streams = stream_dir(run_id)
     rows = []
     for model in models:
-        row = read_report(report_path(out, run_id, name, model))
+        report = report_path(out, run_id, name, model)
+        row = read_report(report) if from_this_run(report, since) else None
         if row:
-            rows.append(dict(model=model, salvaged=True, **row))
+            events = stream_stem(streams, run_id, name, model) + ".events.jsonl"
+            spent = tally(events) if from_this_run(events, since) else None
+            # built by update rather than **-merged: a key in both would raise, and this runs
+            # inside the crash handler that is the caller's last chance at these verdicts
+            salvaged = {"model": model, "salvaged": True}
+            salvaged.update(spent or {})
+            salvaged.update(row)
+            rows.append(salvaged)
     return rows
 
 
@@ -288,6 +384,56 @@ def ensure_ignored(root):
             fh.write("*\n")
 
 
+def stream_events(path):
+    """Every event in a juror's stream, parsed, with everything unparseable dropped.
+
+    Two readers share this file — one reports what a juror is doing, one sums what it spent —
+    and both must survive it: the shapes are a third party's, and the stream is read while the
+    juror is still writing it, so a torn last line is ordinary rather than exceptional.
+
+    **This may not raise, and neither may its callers.** An escape reaches the wait loop, whose
+    finally kills every juror — a reader destroying the panel it was measuring (LAB-65). An
+    unreadable file therefore stops the iteration rather than raising, which makes it
+    indistinguishable from an empty one; both mean the same thing to both callers."""
+    try:
+        # errors="replace" and ValueError below: EOF lands mid-character while the juror is
+        # still writing, and UnicodeDecodeError is a ValueError
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue          # the last line of a live stream is routinely torn
+                if isinstance(ev, dict):
+                    yield ev
+    except Exception:
+        # broad on purpose, and not `never_raises`: a decorator cannot guard a generator,
+        # whose body runs during iteration rather than at the call. GeneratorExit is a
+        # BaseException and still propagates, so closing the generator early still works
+        return
+
+
+def call_key(part):
+    """The (tool, target) two calls are the same call by.
+
+    The whole target, never the rendered one, and every key a tool uses to name it: truncating
+    collapsed six files into one, and a missing key made two different calls look like one
+    repeated (LAB-65 review). Defensive throughout because both callers are bound by
+    stream_events' contract, and `state` holding a list is a shape this stream can carry."""
+    got = part.get("state")
+    arg = got.get("input") if isinstance(got, dict) else None
+    if not isinstance(arg, dict):
+        arg = {}
+    tool = part.get("tool")
+    return (tool if isinstance(tool, str) and tool else "?",
+            str(arg.get("command") or arg.get("filePath") or arg.get("pattern")
+                or arg.get("path") or arg.get("name") or arg.get("patchText") or ""))
+
+
+@never_raises()
 def observed(events_path):
     """What a juror has actually done, read from its live event stream: its last tool call and
     how many times that same call has already been made.
@@ -296,44 +442,115 @@ def observed(events_path):
     heartbeats and dispatch state, because a TUI offered nothing else (LAB-65); a juror's own
     event stream says what it did.
 
-    **This function may not raise.** An escape reaches the wait loop, whose finally kills every
-    juror — a status line destroying the panel it was reporting on. Returns None instead, both
-    for an unreadable stream and for a juror that has yet to call anything."""
+    **May not raise**, which `never_raises` enforces: this is read from the wait loop, whose
+    finally kills every juror, so an escape here destroys the panel it was reporting on
+    (LAB-65). Returns None both for an unreadable stream and for a juror that has yet to call
+    anything."""
     last, counts = None, {}
-    try:
-        # errors="replace" and ValueError below: EOF lands mid-character while the juror is
-        # still writing, and UnicodeDecodeError is a ValueError — see this function's contract
-        # above for why an escape from here is fatal (LAB-65)
-        with open(events_path, errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    ev = json.loads(line)
-                    part = ev.get("part") or {}
-                    if part.get("type") != "tool":
-                        continue
-                    got = part.get("state") or {}
-                    arg = got.get("input") if isinstance(got.get("input"), dict) else {}
-                    # the whole target, never the rendered one, and every key a tool uses to
-                    # name it: truncating collapsed six files into one, and a missing key made
-                    # two different calls look like one repeated (LAB-65 review)
-                    key = (part.get("tool") or "?",
-                           str(arg.get("command") or arg.get("filePath") or arg.get("pattern")
-                               or arg.get("path") or arg.get("name") or arg.get("patchText")
-                               or ""))
-                except Exception:
-                    # every shape in this stream is a third party's, and the last line is
-                    # routinely torn; this function may not raise on any of them
-                    continue
-                counts[key] = counts.get(key, 0) + 1
-                last = key
-    except (OSError, ValueError):
-        return None
+    for ev in stream_events(events_path):
+        part = ev.get("part")
+        if not isinstance(part, dict) or part.get("type") != "tool":
+            continue
+        key = call_key(part)
+        counts[key] = counts.get(key, 0) + 1
+        last = key
     if last is None:
         return None
     return {"tool": last[0], "target": last[1], "repeats": counts[last]}
+
+
+def number(value):
+    """A figure the stream put where a figure belongs, or None where it put something else.
+
+    bool is excluded deliberately: True would otherwise sum as one token. So is a non-finite
+    float, which is not a fussy edge: `json.loads` accepts a bare `NaN`, one contaminates every
+    sum it reaches, and `json.dump` writes it straight back out as bare `NaN` — which is not
+    valid JSON, so a single one makes the settle file unreadable to a strict parser. That file
+    is the caller's only record and their settle signal (LAB-83 jury, luna)."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        return value if math.isfinite(value) else None
+    except OverflowError:
+        # json.loads builds an arbitrary-precision int from a long enough digit string, and
+        # isfinite cannot convert one to a float. Caught here because tally may not raise:
+        # the first guard against a malformed stream was itself a way for one to kill a panel
+        return None
+
+
+# How many repeated calls a juror's row names. glm-5.3-flash made 786 near-identical calls on
+# one panel (LAB-71), so an uncapped list would be the largest thing in the settle file.
+REPEATS_TOP = 5
+
+
+@never_raises()
+def tally(events_path):
+    """What a juror spent and how much work it did, summed from its own event stream.
+
+    opencode writes `cost` and `tokens` on every step-finish and has all along; nothing read
+    them, so LAB-31's spend gap was never a missing measurement (LAB-83).
+
+    Three things this is careful about:
+
+    `cost` is None rather than 0 where no step carried a figure — a free model and a stream
+    that lost its costs must not read alike. Cache reads are summed, because they dominate and
+    carry no input tokens: one juror billed 30 input tokens against 530K read from cache, so
+    input and output alone understate the work by orders of magnitude. And `repeats` counts
+    calls while pricing none of them, because cost sits on the step and never on the call — a
+    juror burning sixteen near-identical refused commands is a count here, which is all the
+    stream can honestly support.
+
+    **May not raise**, which `never_raises` enforces — same reason as observed. Returns None
+    for a stream that said nothing at all, so an absent one adds no keys to a juror's row."""
+    cost, priced, steps, calls, counts = 0.0, 0, 0, 0, {}
+    tokened = 0
+    tokens = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}
+    for ev in stream_events(events_path):
+        part = ev.get("part")
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "tool":
+            calls += 1
+            key = call_key(part)
+            counts[key] = counts.get(key, 0) + 1
+            continue
+        if part.get("type") != "step-finish":
+            continue
+        steps += 1
+        spent = number(part.get("cost"))
+        if spent is not None:
+            cost, priced = cost + spent, priced + 1
+        tok = part.get("tokens")
+        if not isinstance(tok, dict):
+            continue
+        tokened += 1
+        cache = tok.get("cache") if isinstance(tok.get("cache"), dict) else {}
+        for field, value in (("input", tok.get("input")), ("output", tok.get("output")),
+                             ("reasoning", tok.get("reasoning")),
+                             ("cache_read", cache.get("read")),
+                             ("cache_write", cache.get("write"))):
+            got = number(value)
+            if got is not None:
+                tokens[field] += got
+    if not steps and not calls:
+        return None
+    # a target-less call cannot be told apart from another, so counting it as a repeat would
+    # assert a repetition nobody saw — the same rule working_line already follows
+    repeats = sorted(((k, n) for k, n in counts.items() if n > 1 and k[1]),
+                     key=lambda kn: (-kn[1], kn[0]))
+    row = {"cost": round(cost, 6) if priced else None,
+           "tokens": tokens if tokened else None,
+           "steps": steps, "calls": calls,
+           "repeats": [{"tool": k[0], "target": k[1], "calls": n}
+                       for k, n in repeats[:REPEATS_TOP]]}
+    if priced and priced != steps:
+        row["steps_without_cost"] = steps - priced
+    # tokens follow cost rather than reading 0 for never-measured, because this function's own
+    # rule — a free model and a stream that lost its figures must not read alike — was being
+    # applied to one and not the other (LAB-83 jury, deepseek)
+    if tokened and tokened != steps:
+        row["steps_without_tokens"] = steps - tokened
+    return row
 
 
 def shorten(target, limit=60):
@@ -376,16 +593,22 @@ def stream_dir(run_id):
     return path
 
 
+def stream_stem(streams, run_id, name, model):
+    """Where a juror's streams are named. Said once because salvage has to find a stream it
+    never opened (LAB-83).
+
+    `name` is in here for the same reason report_path carries it: a run with two artifacts
+    reuses the run id, and without it the second artifact truncates the first's streams."""
+    return f"{streams}/{run_id}.{name}.{model.split('/')[-1]}"
+
+
 def launch_juror(exe, model, spec, report, root, streams, run_id, name):
     """Start one juror as a bounded process.
 
     stdout goes to a file rather than a pipe on purpose: a piped run killed at its deadline came
     back with nothing at all, and the file is also what lets progress be read while the juror is
     still working, which is what replaced the heartbeats (LAB-65)."""
-    short = model.split("/")[-1]
-    # `name` is in here for the same reason report_path carries it: a run with two artifacts
-    # reuses the run id, and without it the second artifact truncates the first's streams
-    stem = f"{streams}/{run_id}.{name}.{short}"
+    stem = stream_stem(streams, run_id, name, model)
     events, errs = f"{stem}.events.jsonl", f"{stem}.stderr.txt"
     handles = []
     try:
@@ -404,13 +627,13 @@ def launch_juror(exe, model, spec, report, root, streams, run_id, name):
             "stderr": errs, "handles": handles, "started": time.monotonic()}
 
 
+@never_raises(default="")
 def stderr_tail(path, limit=300):
-    """Why a juror exited non-zero, in its own words. Bounded: a crash can print a great deal."""
-    try:
-        with open(path, errors="replace") as fh:
-            return "\n".join(l for l in fh.read().splitlines() if l.strip())[-limit:]
-    except (OSError, ValueError):
-        return ""
+    """Why a juror exited non-zero, in its own words. Bounded: a crash can print a great deal.
+
+    Read while settling a juror, so it may not raise either."""
+    with open(path, errors="replace") as fh:
+        return "\n".join(l for l in fh.read().splitlines() if l.strip())[-limit:]
 
 
 def join_reasons(*parts):
@@ -432,6 +655,11 @@ def headless_row(juror, rc, killed=False, why=None):
             pass
     row = {"model": juror["model"], "returned": False, "parse_ok": False,
            "seconds": round(time.monotonic() - juror["started"], 1)}
+    # here rather than on any one branch: this is the single place every settled juror passes
+    # through, so a juror killed at the deadline reports its spend for free (LAB-83)
+    spent = tally(juror["events"]) if juror.get("events") else None
+    if spent:
+        row.update(spent)
     report = read_report(juror["report"])
     if report:
         row.update(report)
@@ -460,12 +688,17 @@ def headless_line(row, done=None, total=None):
     settle file can never say opposite things: a juror killed after writing a good verdict was
     announced as NO REPORT while being counted in `reported` (LAB-65 review)."""
     short, secs = row["model"].split("/")[-1], int(row["seconds"])
-    tally = f" — {done} of {total}" if done and total else ""
+    of_total = f" — {done} of {total}" if done and total else ""
+    spent = f", {money(row['cost'])}" if number(row.get("cost")) is not None else ""
     if row["parse_ok"] and row["returned"]:
-        return "returned", f"{short} returned in {secs}s{tally}"
+        return "returned", f"{short} returned in {secs}s{spent}{of_total}"
     if row["parse_ok"]:
-        return "returned", f"{short} wrote a verdict but {row['error']}{tally}"
-    return "absent", f"NO REPORT from {short} — {row.get('error')}"
+        # this branch is the juror that ran the full deadline, so it is the expensive one; it
+        # dropped the figure while a juror that wrote nothing kept it (LAB-83 jury, glm+deepseek)
+        return "returned", f"{short} wrote a verdict but {row['error']}{spent}{of_total}"
+    # a juror that died still spent what it spent, which is the whole point of reading this
+    # from the stream rather than from the verdict (LAB-83)
+    return "absent", f"NO REPORT from {short}{spent} — {row.get('error')}"
 
 
 def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_ms, results):
@@ -484,6 +717,9 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
     jurors, pending = [], []      # passed into the wait rather than returned from it, so a
                                   # raise there still leaves every settled row in the caller's
                                   # hands
+    # by identity rather than by model: two jurors can carry the same model id, and skipping
+    # the second by name leaves a live child unkilled (LAB-83 review)
+    settled = set()
     for model in models:
         report = report_path(out, run_id, name, model)
         if os.path.exists(report):
@@ -503,12 +739,14 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
 
     wrote = time.monotonic()
     try:
-        wait_out(jurors, pending, deadline, wrote, len(models))
+        wait_out(jurors, pending, deadline, wrote, len(models), settled)
     finally:
         # every juror dispatched gets a row and every child gets killed, however the wait
         # ended: a result that omits them reads as a smaller panel that did better than it did.
         # Reached on SIGTERM only because main installs a handler; a SIGKILL still leaks
         for juror in pending:
+            if id(juror) in settled:
+                continue        # wait_out already settled it; a second row doubles its spend
             if juror["proc"].poll() is None:
                 juror["proc"].kill()
                 juror["proc"].wait()    # reaped before anything is recorded, so a dying juror
@@ -519,27 +757,35 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
             progress(*headless_line(row), model=juror["model"])
         reported = [j for j in jurors if j.get("parse_ok")]
         impeded = impediment_rollup(jurors)
+        spend = spend_rollup(jurors)
         results.append({"artifact": artifact,
                         "seconds": round(time.monotonic() - started, 1),
                         "reported": len(reported),
                         "confirmed": len([j for j in jurors if j["returned"]]),
-                        "attempted": len(jurors), "impediments": impeded, "jurors": jurors})
+                        "attempted": len(jurors), "impediments": impeded,
+                        "spend": spend, "jurors": jurors})
         announce_walls(name, impeded, len(jurors), reported)
+        announce_spend(name, spend)
 
 
-def wait_out(jurors, pending, deadline, wrote, total=None):
+def wait_out(jurors, pending, deadline, wrote, total=None, settled=None):
     """Wait on the jurors, appending each into `jurors` as its process ends. The deadline is the
     only stop rule; everything read from an event stream is reported and never acted on.
 
     Appends rather than returns so that a raise — a SIGTERM turned into an exit, say — leaves
-    the caller holding every row settled so far."""
+    the caller holding every row settled so far.
+
+    A juror leaves `pending` the moment it enters `jurors`, rather than the two being
+    reconciled after the whole pass. `pending` is what run_headless's finally sweeps, so while
+    a settled juror sits in both it is settled twice — and `TaskStop`, which SKILL.md names as
+    the way to stop a panel, is a SIGTERM this module turns into exactly that kind of escape.
+    It always miscounted `attempted`; since LAB-83 it also doubles the money (LAB-83 review)."""
     while pending:
         time.sleep(POLL_S)
-        now, still = time.monotonic(), []
+        now = time.monotonic()
         for juror in list(pending):
             rc = juror["proc"].poll()
             if rc is None and now < deadline:
-                still.append(juror)
                 continue
             if rc is None:
                 juror["proc"].kill()
@@ -547,13 +793,17 @@ def wait_out(jurors, pending, deadline, wrote, total=None):
                 row = headless_row(juror, None, killed=True)
             else:
                 row = headless_row(juror, rc)
+            jurors.append(row)
+            if settled is not None:
+                settled.add(id(juror))
+            pending.remove(juror)
+            # after the bookkeeping, not before: say and record are guarded now, so this is
+            # defence in depth rather than the only thing between an escape and a juror
+            # settled twice
             kind, line = headless_line(
-                row, len([j for j in jurors if j.get("parse_ok")]) + bool(row["parse_ok"]),
-                total)
+                row, len([j for j in jurors if j.get("parse_ok")]), total)
             progress("timeout" if rc is None and not row["parse_ok"] else kind, line,
                      model=juror["model"])
-            jurors.append(row)
-        pending[:] = still
         if pending and now - wrote >= REPORT_EVERY_S:
             for juror in pending:
                 # file only: a heartbeat printed is a conversation turn, and a panel that
@@ -581,6 +831,22 @@ def announce_walls(name, impeded, attempted, reported):
                  walls=len(impeded["walls"]))
     if not reported:
         progress("no_verdict", f"{name}: NO VERDICT — none of {attempted} jurors reported")
+
+
+def announce_spend(name, spend):
+    """What the panel cost, once. Each juror's own line carries its share; this is the total,
+    which is the figure a panel-composition decision is actually made on (LAB-83)."""
+    if spend["cost"] is None and not spend["steps"] and not spend["calls"]:
+        return                       # nothing was read; saying "$0.0000" would be a claim
+    total = money(spend["cost"]) if spend["cost"] is not None else "cost unknown"
+    missing = spend.get("jurors_without_cost")
+    progress("spend",
+             f"{name}: {total} over {spend['steps']} step"
+             f"{'s' * (spend['steps'] != 1)} and {spend['calls']} call"
+             f"{'s' * (spend['calls'] != 1)}"
+             + (f"; no cost read for {len(missing)} juror"
+                f"{'s' * (len(missing) != 1)}" if missing else ""),
+             cost=spend["cost"])
 
 
 def main():
@@ -617,6 +883,8 @@ def main():
     # The run id prefixes filenames rather than adding a directory: the juror's edit
     # permission is `agents/out/*`, and whether that glob crosses a slash is unverified.
     # Concurrent runs stay isolated exactly as far as their run ids differ, and no further.
+    # wall-clock, not monotonic: it is compared against stream mtimes (see from_this_run)
+    since = time.time()
     run_id = args.run_id or f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     results_path = args.results or os.path.join(args.out, f"{run_id}.jury-result.json")
     PROGRESS["path"] = os.path.join(args.out, f"{run_id}.progress.jsonl")
@@ -639,13 +907,13 @@ def main():
         if crash is not None:
             payload["error"] = f"{type(crash).__name__}: {crash}"
             if not results:                      # nothing was recorded; rescue what landed
-                rows = salvage(args.out, run_id, args.artifact[0], args.models)
+                rows = salvage(args.out, run_id, args.artifact[0], args.models, since)
                 if rows:
                     payload["results"] = [{"artifact": args.artifact[0], "salvaged": True,
                                            "reported": len([r for r in rows if r["parse_ok"]]),
                                            "attempted": len(rows),
                                            "impediments": impediment_rollup(rows),
-                                           "jurors": rows}]
+                                           "spend": spend_rollup(rows), "jurors": rows}]
         try:
             os.makedirs(os.path.dirname(results_path) or ".", exist_ok=True)
             with open(results_path, "w") as fh:

@@ -84,9 +84,16 @@ def test_crash_mid_panel_salvages_what_landed():
     try:
         os.chdir(d)
         os.makedirs("out")
-        open("out/S.a.alpha.json", "w").write(json.dumps(_verdict()))
         m.check_models = lambda models: None
-        m.run_headless = _boom("died mid-panel")
+
+        def wrote_then_died(*a, **k):
+            # written from inside the run, which is what "mid-panel" means: the juror had
+            # landed its verdict before the crash. A report seeded before main() starts is a
+            # previous run's by definition now, and is the next test's subject (LAB-83 review)
+            open("out/S.a.alpha.json", "w").write(json.dumps(_verdict()))
+            raise RuntimeError("died mid-panel")
+
+        m.run_headless = wrote_then_died
         sys.argv = argv(run_id="S", out="out", models="m/alpha")
         try:
             m.main()
@@ -98,6 +105,31 @@ def test_crash_mid_panel_salvages_what_landed():
     r = settled["results"][0]
     assert r["salvaged"] is True and r["reported"] == 1, r
     assert r["jurors"][0]["report"]["verdict"] == "pass", r
+
+
+def test_salvage_never_serves_a_previous_runs_verdict():
+    """run_headless deletes a stale report before launching, but salvage is reached on the
+    path where run_headless never ran — so a hand-passed run id could have a previous run's
+    verdict counted in `reported`, which is the error that deletion exists to prevent."""
+    m = load()
+    d = repo()
+    cwd = os.getcwd()
+    try:
+        os.chdir(d)
+        os.makedirs("out")
+        open("out/S.a.alpha.json", "w").write(json.dumps(_verdict("block")))
+        os.utime("out/S.a.alpha.json", (1_000_000, 1_000_000))     # a run long finished
+        m.check_models = _boom("died before any juror started")
+        sys.argv = argv(run_id="S", out="out", models="m/alpha")
+        try:
+            m.main()
+        except RuntimeError:
+            pass
+        settled = json.load(open(os.path.join(d, "out", "S.jury-result.json")))
+    finally:
+        os.chdir(cwd)
+    assert settled["results"] == [], settled
+    assert "died before any juror started" in settled["error"], settled
 
 
 def test_stale_report_is_never_served_as_this_runs_verdict():
@@ -973,6 +1005,521 @@ def test_main_runs_the_headless_path_end_to_end():
     r = settled["results"][0]
     assert (r["reported"], r["confirmed"], r["attempted"]) == (1, 1, 1), r
     assert r["jurors"][0]["report"]["verdict"] == "revise", r["jurors"][0]
+
+
+# What a panel cost (LAB-83).  opencode wrote `cost` and `tokens` on every step all along and
+# nothing read them, which is the measurement that reopened LAB-31's gap.  Totals and token
+# counts here are run STE-266-20260917-224009's own; where a juror's 42 steps are collapsed
+# into two, the first is that run's real first step and the second is the remainder, chosen so
+# the sum lands on the total it actually reached.
+
+
+def _step(cost=None, **tokens):
+    """One step-finish, shaped as opencode writes it."""
+    part = {"type": "step-finish"}
+    if cost is not None:
+        part["cost"] = cost
+    if tokens:
+        cache = {"read": tokens.pop("cache_read", 0), "write": tokens.pop("cache_write", 0)}
+        part["tokens"] = dict(tokens, cache=cache)
+    return json.dumps({"type": "step_finish", "part": part})
+
+
+def _call(tool="read", **arg):
+    return json.dumps({"type": "tool_use",
+                       "part": {"type": "tool", "tool": tool, "state": {"input": arg}}})
+
+
+def _stream(d, *lines, name="e.jsonl"):
+    path = os.path.join(d, name)
+    open(path, "w").write("\n".join(lines) + "\n")
+    return path
+
+
+def test_a_panel_reports_what_each_juror_cost():
+    """LAB-31 closed with spend unrecorded, and LAB-37 carried it forward as a gap needing a
+    platform.  Both readings were wrong.  These are the deepseek juror's own steps."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        spent = m.tally(_stream(d, _step(0.0042564, input=27660, output=179),
+                                _step(0.0769436, input=215465, output=46230)))
+        assert spent["cost"] == 0.0812, spent
+        assert (spent["steps"], spent["calls"]) == (2, 0), spent
+        assert spent["tokens"]["input"] == 243125, spent
+
+
+def test_a_stream_with_no_cost_says_unknown_and_never_zero():
+    """A free model and a stream that lost its costs must not read alike: summing an absent
+    figure to 0 reports a panel that cost nothing, which is a claim nobody measured."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        blank = m.tally(_stream(d, _step(), _step(), name="blank.jsonl"))
+        assert blank["cost"] is None and blank["steps"] == 2, blank
+        free = m.tally(_stream(d, _step(0.0), name="free.jsonl"))
+        assert free["cost"] == 0 and free["cost"] is not None, free
+        partial = m.tally(_stream(d, _step(0.01), _step(), name="partial.jsonl"))
+        assert partial["cost"] == 0.01 and partial["steps_without_cost"] == 1, partial
+
+
+def test_cache_reads_count_as_the_work_they_were():
+    """gpt-5.6-luna billed 30 input tokens against 530K read from cache, so input and output
+    alone understate what a juror did by orders of magnitude."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        spent = m.tally(_stream(d, _step(0.0463, input=30, output=1460, reasoning=1991,
+                                         cache_read=530890, cache_write=126148)))
+        tok = spent["tokens"]
+        assert (tok["cache_read"], tok["cache_write"]) == (530890, 126148), tok
+        assert (tok["input"], tok["reasoning"]) == (30, 1991), tok
+
+
+def test_a_torn_cost_stream_never_costs_the_panel():
+    """tally() is read from the wait loop, whose finally kills every juror — so an escape here
+    destroys the panel it was measuring.  Same contract as observed(), same reason (LAB-65)."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        torn = _stream(d, _step(0.01, input=5), '{"type":"step_fin')
+        assert m.tally(torn)["cost"] == 0.01, "a torn last line is ordinary, not fatal"
+        # mid-stream, not trailing: JSONDecodeError is a ValueError, so the reader's outer
+        # handler catches a torn line either way — but it ends the whole stream, where the
+        # per-line skip loses only that line.  A trailing bad line cannot tell them apart
+        mid = _stream(d, _step(0.01), '{"type":"step_fin', _step(0.02), name="mid.jsonl")
+        assert m.tally(mid)["cost"] == 0.03, "a line after a torn one must still count"
+        for junk in ('{"part": 3}', '{"part": []}', '{"part": {"type": "step-finish"}}',
+                     '{"part": {"type": "step-finish", "cost": "free"}}',
+                     '{"part": {"type": "step-finish", "cost": true}}',
+                     '{"part": {"type": "step-finish", "tokens": []}}',
+                     '{"part": {"type": "tool", "state": []}}',
+                     '[]', 'null', '3', 'not json at all', ''):
+            m.tally(_stream(d, junk, name="junk.jsonl"))          # must not raise
+        assert m.tally(os.path.join(d, "never-written.jsonl")) is None
+        # bool is not a figure: True would otherwise sum as one dollar and one token
+        lying = m.tally(_stream(d, '{"part": {"type": "step-finish", "cost": true}}',
+                                name="lying.jsonl"))
+        assert lying["cost"] is None, lying
+
+
+def test_a_juror_killed_at_the_deadline_still_reports_its_spend():
+    """The kill is where the figure matters most: the run is over and the money is gone
+    either way.  It falls out of headless_row rather than needing a path of its own."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        ev = "\n".join([_step(0.0231, input=900), _call("read", filePath="a.md")])
+        _, row, said, _, proc = headless(m, d, [None], events=ev, timeout_ms=1)
+        assert proc.killed, "the deadline must actually kill it"
+        assert (row["cost"], row["steps"], row["calls"]) == (0.0231, 1, 1), row
+        # `said`, not `wrote`: a juror settling is a change of state, so its line is one the
+        # caller is woken for — the distinction LAB-75 drew
+        assert any("$0.0231" in msg for _, msg in said), said
+
+
+def test_a_repeated_call_is_counted_and_never_priced():
+    """Cost sits on the step and never on the call, so what a juror burned repeating itself is
+    a count here.  LAB-71 bounds the 786-call case and deliberately leaves the 16-call one;
+    this is what makes the second a number rather than an impression."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        lines = ([_step(0.05)] + [_call("bash", command="git status")] * 16
+                 + [_call("read", filePath="a.md")])
+        spent = m.tally(_stream(d, *lines))
+        top = spent["repeats"][0]
+        assert (top["tool"], top["calls"]) == ("bash", 16), spent["repeats"]
+        assert "cost" not in top, "no per-call price exists to report"
+        assert spent["calls"] == 17, spent
+        assert [r for r in spent["repeats"] if r["tool"] == "read"] == [], spent["repeats"]
+
+
+def test_a_targetless_call_is_never_reported_as_repeated():
+    """Two calls with no target cannot be told apart, so counting them as one repeated call
+    asserts a repetition nobody saw — the rule working_line already follows."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        spent = m.tally(_stream(d, *[_call("todowrite")] * 7))
+        assert spent["calls"] == 7 and spent["repeats"] == [], spent
+
+
+def test_the_repeats_rollup_is_capped():
+    """glm-5.3-flash made 786 near-identical calls on one panel.  Uncapped, that list would be
+    the largest thing in the settle file."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        lines = []
+        for i in range(12):
+            lines += [_call("read", filePath=f"f{i}.md")] * (i + 2)
+        spent = m.tally(_stream(d, *lines))
+        assert len(spent["repeats"]) == m.REPEATS_TOP, spent["repeats"]
+        assert spent["repeats"][0]["calls"] == 13, spent["repeats"][0]
+
+
+def test_the_settle_file_carries_what_the_panel_spent():
+    """The result is the caller's record, so the figure has to survive into it rather than
+    living only on a progress line that scrolled past."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        good = json.dumps({"verdict": "pass", "findings": [], "impediments": []})
+        res, row, said, _, _ = headless(m, d, [0], report=good,
+                                        events=_step(0.0463, input=30, cache_read=530890))
+        assert res["spend"]["cost"] == 0.0463, res["spend"]
+        assert res["spend"]["steps"] == 1 and "jurors_without_cost" not in res["spend"], res
+        assert row["tokens"]["cache_read"] == 530890, row
+        assert any(k == "spend" and "$0.0463" in msg for k, msg in said), said
+
+
+def test_a_juror_with_no_cost_is_named_rather_than_counted_free():
+    """A total that quietly stands for less than the whole panel is the same error as counting
+    silence as approval, which this runner exists to avoid."""
+    m = load()
+    mixed = m.spend_rollup([{"model": "m/a", "cost": 0.02, "steps": 3, "calls": 4},
+                            {"model": "m/b"}])
+    assert mixed["cost"] == 0.02 and mixed["jurors_without_cost"] == ["m/b"], mixed
+    assert (mixed["steps"], mixed["calls"]) == (3, 4), mixed
+    assert m.spend_rollup([{"model": "m/b"}])["cost"] is None
+
+
+def test_a_cents_scale_panel_keeps_the_differences_it_is_chosen_on():
+    """LAB-32 picks a panel on these figures, and two decimals halve how many of them there
+    are to pick between."""
+    m = load()
+    measured = [0.0812, 0.0535, 0.0463, 0.0793]
+    assert len({m.money(c) for c in measured}) == 4
+    assert len({f"${c:.2f}" for c in measured}) == 2
+
+
+def test_a_crashed_run_salvages_what_it_spent_not_only_what_it_collected():
+    """salvage() is the caller's last chance at a crashed panel, and the money is as gone as
+    the verdicts are written."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        streams, out = os.path.join(d, "streams"), os.path.join(d, "out")
+        os.makedirs(streams), os.makedirs(out)
+        m.stream_dir = lambda run_id: streams
+        open(m.report_path(out, "R", "a", "m/alpha"), "w").write(
+            json.dumps({"verdict": "pass", "findings": []}))
+        open(m.stream_stem(streams, "R", "a", "m/alpha") + ".events.jsonl", "w").write(
+            _step(0.031) + "\n")
+        rows = m.salvage(out, "R", "a.md", ["m/alpha"], 0)
+        assert rows[0]["salvaged"] and rows[0]["cost"] == 0.031, rows
+        assert rows[0]["parse_ok"], rows
+
+
+# The jury's own findings on this change, and /code-review's (LAB-83 review).  Each names the
+# reader that caught it, because four of the eight were things the author's own tests missed.
+
+
+def test_every_settled_juror_carries_its_cost():
+    """The middle branch — a verdict written, then killed at the backstop — dropped the figure
+    while a juror that wrote nothing kept it.  That is the expensive juror, and the comment on
+    the branch below it already said a juror that died still spent what it spent."""
+    m = load()
+    base = {"model": "m/alpha", "seconds": 42.0, "cost": 0.0812}
+    lines = [m.headless_line(dict(base, parse_ok=True, returned=True), 1, 4)[1],
+             m.headless_line(dict(base, parse_ok=True, returned=False,
+                                  error="killed at the 42s timeout"), 1, 4)[1],
+             m.headless_line(dict(base, parse_ok=False, returned=False,
+                                  error="killed at the 42s timeout"))[1]]
+    for line in lines:
+        assert "$0.0812" in line, line
+
+
+def test_a_non_finite_figure_never_reaches_the_settle_file():
+    """`json.loads` accepts a bare NaN, one contaminates every sum it reaches, and `json.dump`
+    writes it back out as bare NaN — which is not valid JSON, so one malformed step would make
+    the caller's only record unreadable to a strict parser (jury: gpt-5.6-luna)."""
+    m = load()
+    assert m.number(float("nan")) is None
+    assert m.number(float("inf")) is None and m.number(float("-inf")) is None
+    # an int json.loads built from 400 digits: isfinite cannot convert it, and the guard
+    # against a malformed stream must not itself be how a malformed stream kills a panel
+    assert m.number(int("9" * 400)) is None
+    with tempfile.TemporaryDirectory() as d:
+        spent = m.tally(_stream(d, '{"part": {"type": "step-finish", "cost": 0.05}}',
+                                '{"part": {"type": "step-finish", "cost": NaN}}',
+                                '{"part": {"type": "step-finish", "tokens": {"input": %s}}}' % ("9" * 400),
+                                '{"part": {"type": "step-finish", "tokens": {"input": Infinity}}}'))
+        assert spent["cost"] == 0.05, spent
+        assert spent["steps_without_cost"] == 3, spent
+        assert spent["tokens"]["input"] == 0, spent
+        # the whole point: the record has to survive a strict reader
+        def strict(c):
+            raise AssertionError(f"bare {c} reached the settle file")
+        json.loads(json.dumps({"spend": m.spend_rollup([dict(model="m/a", **spent)])}),
+                   parse_constant=strict)
+
+
+def test_salvage_never_prices_a_juror_this_run_did_not_launch():
+    """Streams are kept on purpose and salvage runs where nothing truncated them, so a reused
+    run id let a previous run's stream be reported as this one's spend — $4.20 for a juror that
+    never started (/code-review)."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        streams, out = os.path.join(d, "streams"), os.path.join(d, "out")
+        os.makedirs(streams), os.makedirs(out)
+        m.stream_dir = lambda run_id: streams
+        open(m.report_path(out, "R", "a", "m/alpha"), "w").write(
+            json.dumps({"verdict": "pass", "findings": []}))
+        stale = m.stream_stem(streams, "R", "a", "m/alpha") + ".events.jsonl"
+        open(stale, "w").write(_step(4.2) + "\n")
+        os.utime(stale, (1_000_000, 1_000_000))            # a previous run, long finished
+        rows = m.salvage(out, "R", "a.md", ["m/alpha"], since=2_000_000)
+        assert rows[0]["parse_ok"], "the verdict is still salvaged"
+        assert "cost" not in rows[0], rows[0]
+        assert m.spend_rollup(rows)["cost"] is None, m.spend_rollup(rows)
+        # and a stream this run did write is still read
+        os.utime(stale, (3_000_000, 3_000_000))
+        assert m.salvage(out, "R", "a.md", ["m/alpha"], since=2_000_000)[0]["cost"] == 4.2
+
+
+def test_a_panel_stopped_mid_pass_settles_each_juror_once():
+    """TaskStop is the way SKILL.md says to stop a panel, and main turns that SIGTERM into a
+    SystemExit that lands wherever the loop happens to be. Settled jurors left in `pending`
+    are swept a second time by run_headless's finally — which always miscounted `attempted`
+    and, since spend is summed, doubles the money too (/code-review).
+
+    Driven through run_headless rather than by reimplementing its finally here: a test that
+    inlines the logic it is checking passes whatever the runner does (LAB-83 review)."""
+    m = load()
+    m.POLL_S = 0
+    m.progress = lambda *a, **k: None
+    m.opencode_exe = lambda: "opencode"
+    d = tempfile.mkdtemp()
+    out = os.path.join(d, "out")
+    os.makedirs(out, exist_ok=True)
+    costs = {"m/a": 0.1, "m/b": 0.2, "m/c": 0.4}
+
+    class Exited:
+        def poll(self): return 0
+        def kill(self): pass
+        def wait(self): return 0
+
+    def launch(exe, model, spec, rep, root, streams, run_id, name):
+        path = os.path.join(d, f"{model.replace('/', '_')}.jsonl")
+        open(path, "w").write(_step(costs[model]) + "\n")
+        return {"model": model, "proc": Exited(), "report": rep, "events": path,
+                "stderr": path, "handles": (), "started": m.time.monotonic()}
+
+    m.launch_juror = launch
+    real, seen = m.headless_row, {"n": 0}
+
+    def exiting(j, rc, **kw):
+        seen["n"] += 1
+        if seen["n"] == 2:                  # the stop lands after the first juror settled
+            raise SystemExit("terminated")
+        return real(j, rc, **kw)
+
+    m.headless_row = exiting
+    results = []
+    try:
+        m.run_headless(list(costs), "a.md", "i.md", "plan", out, "R", d, 60000, results)
+    except SystemExit:
+        pass
+    m.headless_row = real
+
+    assert results, "the finally must still hand back a result"
+    rows = results[0]["jurors"]
+    models = [r["model"] for r in rows]
+    assert sorted(models) == ["m/a", "m/b", "m/c"], models
+    assert len(models) == len(set(models)), f"a juror was settled twice: {models}"
+    assert results[0]["attempted"] == 3, results[0]["attempted"]
+    assert results[0]["spend"]["cost"] == 0.7, results[0]["spend"]
+
+
+def test_a_panel_that_made_calls_but_finished_no_step_still_reports():
+    """A juror killed inside its first model call has calls and no step-finish, so cost is None
+    and steps is 0 — and the spend line was suppressed entirely, while the settle file carried
+    the counts (jury: glm-5.3-flash, /code-review). A panel that read nothing at all still says
+    nothing, which is the one case the doc now names."""
+    m = load()
+    said = []
+    m.progress = lambda kind, msg, **kw: said.append((kind, msg))
+    m.announce_spend("LAB-83", {"cost": None, "steps": 0, "calls": 9,
+                                "jurors_without_cost": ["m/a"]})
+    assert said and said[0][0] == "spend", said
+    assert "cost unknown" in said[0][1] and "9 calls" in said[0][1], said
+    # and a panel that truly read nothing still says nothing: "$0.0000" would be a claim
+    said.clear()
+    m.announce_spend("LAB-83", {"cost": None, "steps": 0, "calls": 0})
+    assert said == [], said
+
+
+def test_never_raises_stops_bugs_but_never_the_panel():
+    """The contract four functions declared and fourteen hand-written except clauses were meant
+    to enforce. Three rounds each found one whose clause did not match reality, so it is a
+    construct now (LAB-83 review).
+
+    The BaseException half is the part that matters most: main turns SIGTERM into SystemExit
+    on purpose, and swallowing it would leave a panel nothing could stop — the opposite of the
+    failure this guards."""
+    m = load()
+
+    @m.never_raises(default="fallback")
+    def boom(exc):
+        raise exc
+
+    for exc in (ValueError("closed file"), OverflowError("too large"), OSError("gone"),
+                TypeError("shape"), KeyError("missing"), RuntimeError("?")):
+        assert boom(exc) == "fallback", exc
+
+    for exc in (SystemExit("terminated"), KeyboardInterrupt()):
+        try:
+            boom(exc)
+        except BaseException as got:
+            assert type(got) is type(exc), got
+        else:
+            raise AssertionError(f"{type(exc).__name__} must pass through, not be swallowed")
+
+    # and the guarded readers really are guarded, whatever the argument
+    assert m.tally(None) is None and m.observed(None) is None
+    assert m.stderr_tail(None) == ""
+    m.PROGRESS["path"] = None
+    m.event = lambda msg: (_ for _ in ()).throw(ValueError("closed"))
+    m.progress("returned", "alpha returned")          # must not raise
+
+
+def test_a_closed_stdout_never_orphans_a_juror():
+    """`except OSError` does not catch ValueError, and a closed stdout raises one. Escaping
+    progress() lands in run_headless's finally, which then kills no remaining juror and
+    records no result — orphaned `opencode run` children spending tokens beside a settle file
+    saying the panel was empty, which is worse than the double-settle this replaced
+    (/code-review)."""
+    m = load()
+    m.opencode_exe = lambda: "opencode"
+    m.POLL_S = 0
+    d = tempfile.mkdtemp()
+    out = os.path.join(d, "out")
+    os.makedirs(out, exist_ok=True)
+    killed = []
+
+    class NeverExits:
+        def __init__(self, model): self.model = model
+        def poll(self): return None
+        def kill(self): killed.append(self.model)
+        def wait(self): return -9
+
+    def launch(exe, model, spec, rep, root, streams, run_id, name):
+        path = os.path.join(d, "e.jsonl")
+        open(path, "w").write("")
+        return {"model": model, "proc": NeverExits(model), "report": rep, "events": path,
+                "stderr": path, "handles": (), "started": m.time.monotonic()}
+
+    m.launch_juror = launch
+    m.event = lambda msg: (_ for _ in ()).throw(ValueError("I/O operation on closed file"))
+    results = []
+    m.run_headless(["m/a", "m/b", "m/c"], "a.md", "i.md", "plan", out, "R", d, 1, results)
+    assert sorted(killed) == ["m/a", "m/b", "m/c"], killed
+    assert results and results[0]["attempted"] == 3, results
+
+
+def test_a_duplicated_model_never_leaves_a_child_running():
+    """The finally skips jurors wait_out already settled. Keyed by model rather than by
+    identity, a second juror carrying the same model id was skipped while still alive: never
+    killed, never recorded (/code-review)."""
+    m = load()
+    m.opencode_exe = lambda: "opencode"
+    m.POLL_S = 0
+    m.progress = lambda *a, **k: None
+    d = tempfile.mkdtemp()
+    out = os.path.join(d, "out")
+    os.makedirs(out, exist_ok=True)
+    killed, made = [], []
+
+    class Proc:
+        def __init__(self, exits): self.exits = exits
+        def poll(self): return 0 if self.exits else None
+        def kill(self): killed.append(id(self))
+        def wait(self): return -9
+
+    def launch(exe, model, spec, rep, root, streams, run_id, name):
+        path = os.path.join(d, "e.jsonl")
+        open(path, "w").write("")
+        proc = Proc(not made)                    # the first settles, the second keeps running
+        made.append(proc)
+        return {"model": model, "proc": proc, "report": rep, "events": path,
+                "stderr": path, "handles": (), "started": m.time.monotonic()}
+
+    m.launch_juror = launch
+    real, seen = m.headless_row, {"n": 0}
+
+    def exiting(j, rc, **kw):
+        seen["n"] += 1
+        if seen["n"] == 2:
+            raise SystemExit("terminated")
+        return real(j, rc, **kw)
+
+    m.headless_row = exiting
+    results = []
+    try:
+        m.run_headless(["m/a", "m/a"], "a.md", "i.md", "plan", out, "R", d, 1, results)
+    except SystemExit:
+        pass
+    m.headless_row = real
+    # keyed by model, the second juror is skipped entirely: no kill, no row, and a panel of
+    # two reported as one. kill() may land more than once on an already-dead child, which is
+    # a no-op, so the count is not what is asserted here
+    assert id(made[1]) in killed, "the live duplicate must still be killed"
+    assert results and results[0]["attempted"] == 2, results
+    assert [j["model"] for j in results[0]["jurors"]] == ["m/a", "m/a"], results[0]["jurors"]
+
+
+def test_a_verdict_written_just_before_the_clock_is_still_salvaged():
+    """from_this_run compares a filesystem mtime against this process's clock. Whole-second
+    granularity or a lagging mount can date a fresh verdict before the run began, and judging
+    it stale loses it silently — the failure salvage exists to prevent (/code-review)."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        report = os.path.join(d, "r.json")
+        open(report, "w").write("{}")
+        os.utime(report, (10_000, 10_000))
+        assert m.from_this_run(report, 10_000 + m.STALE_SLACK_S - 1), "within slack: keep"
+        assert not m.from_this_run(report, 10_000 + m.STALE_SLACK_S + 60), "a previous run: drop"
+
+
+def test_a_closed_monitor_pipe_never_settles_a_juror_twice():
+    """print() sat outside progress()'s guard, so a BrokenPipeError escaped mid-pass through
+    wait_out — which rebuilds `pending` only after its whole loop, leaving settled jurors in it
+    for the finally to settle again.  Cosmetic for `attempted`; money once spend is summed."""
+    m = load()
+    m.PROGRESS["path"] = None
+
+    def broken(msg):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    m.event = broken
+    m.progress("returned", "alpha returned in 42s")       # must not raise
+
+    # and the record must outlive the channel: a closed pipe is the case the progress file
+    # exists for, so one shared guard would drop the line exactly when the stream was lost
+    with tempfile.TemporaryDirectory() as d:
+        m.PROGRESS["path"] = os.path.join(d, "p.jsonl")
+        m.progress("returned", "alpha returned in 42s, $0.0812")
+        written = open(m.PROGRESS["path"]).read().splitlines()
+        assert len(written) == 1, written
+        assert json.loads(written[0])["message"].endswith("$0.0812"), written
+
+
+def test_tokens_say_unknown_on_the_same_terms_as_cost():
+    """tally reported cost as None when unmeasured but tokens as 0, applying its own rule — a
+    free model and a stream that lost its figures must not read alike — to one and not the
+    other (jury: deepseek-v4-flash)."""
+    m = load()
+    with tempfile.TemporaryDirectory() as d:
+        none = m.tally(_stream(d, _step(0.01), _step(0.02)))
+        assert none["tokens"] is None and none["cost"] == 0.03, none
+        some = m.tally(_stream(d, _step(0.01, input=5), _step(0.02), name="some.jsonl"))
+        assert some["tokens"]["input"] == 5, some
+        assert some["steps_without_tokens"] == 1, some
+
+
+def test_the_spend_line_names_jurors_not_calls():
+    """"no cost read for 2 of them" attached to `calls`, and meant jurors."""
+    m = load()
+    said = []
+    m.progress = lambda kind, msg, **kw: said.append(msg)
+    m.announce_spend("LAB-83", {"cost": 0.017, "steps": 4, "calls": 9,
+                                "jurors_without_cost": ["m/b", "m/c"]})
+    assert "2 jurors" in said[0], said
+    m.announce_spend("LAB-83", {"cost": 0.017, "steps": 1, "calls": 1,
+                                "jurors_without_cost": ["m/b"]})
+    assert "1 juror;" in said[1] or said[1].endswith("1 juror"), said
 
 
 #
