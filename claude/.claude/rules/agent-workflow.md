@@ -34,6 +34,14 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 
 Never install, add, upgrade or remove dependencies, or edit `package.json`, lockfiles, or build config, on your own initiative. It needs an explicit ask or an already-agreed plan — never folded into some other goal ("just to check it renders"). If something is missing, say so and stop. When an install *is* agreed, use whichever manager the project's lockfile indicates, and never add a second lockfile.
 
+## Long-running jobs
+
+Once a job is running — a review panel, a build, a deploy, a migration, a backfill — watching it is not the same as running it. **Never intervene unasked, and never offer to.** No "want me to stop it?", no unprompted cost commentary, no proposal to take a partial result. The caller asked for the job; an offer to cut it short is an intervention dressed as a question, and it arrives exactly when they are least able to judge it.
+
+- **Report what changed, not what it might mean.** A step finishing is worth a sentence. Arithmetic, trajectories and predictions off a progress counter are not — a rising number looks identical whether the work is going well or badly.
+- **Don't form the answer from partial output.** Wait for the job's own settle — the result file, the exit code, the summary it writes — before concluding anything. Consuming results in arrival order anchors the conclusion on whichever part finished first, which is a different answer from the one the job was asked for. Reading a log to answer a question that was actually asked is fine; what is barred is treating what has landed so far as the verdict.
+- **Stopping it is the caller's call, and theirs to raise.** Answer fully when they ask.
+
 ## Keeping plans current
 
 When a plan, Linear issue, or other living document has gone out of date, ask to **correct the document itself** — rewrite the description/body so it matches the current reality. Don't default to bolting on a comment or appendix that leaves the stale plan in place. A comment records a discussion; the canonical description should always reflect the current plan. Suggest the rewrite, not the comment.
