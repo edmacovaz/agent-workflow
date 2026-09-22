@@ -104,19 +104,24 @@ def is_running(rows, path, now):
 
     A SIGKILLed runner writes no `settled` — that is written in a `finally`, which SIGKILL
     skips — and nothing prunes `agents/out`, so its file stays the newest one in the directory.
-    Asking the OS about the runner's pid answers this outright; mtime only ever guessed, and
-    guessed for up to half an hour (LAB-86)."""
+    The runner's pid turns that from a guess into a question the OS answers (LAB-86).
+
+    **The age bound stays, and applies to both answers.** A pid is only as good as its
+    uniqueness: once the OS reuses it, a dead run's file reads as live, and without the bound it
+    would read that way forever — worse than the bounded guess it replaced (LAB-86 review). So
+    a run is live when the pid is alive *and* something has been written recently."""
     age = int(now - os.path.getmtime(path))
+    fresh = age < ABANDONED_AFTER
     pid = next((r["pid"] for r in reversed(rows) if isinstance(r.get("pid"), int)), None)
     if pid is None:
-        return age < ABANDONED_AFTER, age      # pre-`pid` file: the old guess, bounded
+        return fresh, age            # a file written before the field existed: the old guess
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False, age
     except OSError:
         pass                         # EPERM: a live process this user may not signal
-    return True, age
+    return fresh, age
 
 
 def render(path, now=None):

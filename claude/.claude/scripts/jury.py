@@ -743,6 +743,12 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
         # writes no `settled` at all. Both facts were here and simply never recorded (LAB-86).
         progress("dispatched", f"{len(pending)} juror{'s' * (len(pending) != 1)} dispatched",
                  artifact=name, pid=os.getpid())
+        # one round now, not in a minute's time: the wait writes these every REPORT_EVERY_S, so
+        # without this the display opens on a bare header and names no juror until the first
+        # interval elapses — the panel's least informative minute (LAB-86 review)
+        for juror in pending:
+            record("working", working_line(juror["model"], juror, time.monotonic()),
+                   model=juror["model"], artifact=name)
 
     wrote = time.monotonic()
     try:
@@ -820,7 +826,7 @@ def wait_out(jurors, pending, deadline, wrote, total=None, settled=None, artifac
             wrote = now
 
 
-def check_display():
+def check_display(settings=None, script=None):
     """Say so, once, when the status line no longer renders the panel.
 
     Orca rewrites `~/.claude/settings.json` in place on upgrade — `dotfiles` commit 3635996 is
@@ -829,15 +835,28 @@ def check_display():
     recorded, because the file a recorded line lands in is the one nothing is rendering.
 
     Checked here rather than by the agent: the settings file is 39.9KB, so reading it into a
-    session cost about 11k tokens a panel for a check that almost always passes (LAB-86)."""
+    session cost about 11k tokens a panel for a check that almost always passes (LAB-86).
+
+    Named *and* present, because they fail separately: the slot can name a script that is not
+    there, which is every machine where the change has not merged — `~/.claude/scripts/`
+    resolves to the main checkout. Checking only the name passed a run that rendered nothing,
+    which is the failure this exists to catch (LAB-86 review).
+
+    Both paths are arguments so the branches can be tested without writing to the real ones."""
+    settings = settings or os.path.expanduser("~/.claude/settings.json")
+    script = script or os.path.expanduser("~/.claude/scripts/statusline.py")
     try:
-        with open(os.path.expanduser("~/.claude/settings.json")) as fh:
+        with open(settings) as fh:
             command = (json.load(fh).get("statusLine") or {}).get("command", "")
     except (OSError, ValueError):
         return                       # no readable settings is not evidence either way
     if "statusline.py" not in command:
         progress("display_missing",
                  "Panel display not installed — statusLine does not name statusline.py, "
+                 "so this run will not render anywhere")
+    elif not os.path.exists(script):
+        progress("display_missing",
+                 f"Panel display named but not installed — {script} does not exist, "
                  "so this run will not render anywhere")
 
 
@@ -875,7 +894,7 @@ def announce_spend(name, spend):
              f"{'s' * (spend['calls'] != 1)}"
              + (f"; no cost read for {len(missing)} juror"
                 f"{'s' * (len(missing) != 1)}" if missing else ""),
-             cost=spend["cost"])
+             cost=spend["cost"], artifact=name)
 
 
 def main():
