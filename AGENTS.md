@@ -17,25 +17,29 @@ part of the loop.
 **One Orca worktree per issue**, the usual convention. This section states no override, so
 `start-work` applies that default.
 
-**Nothing here is live until it is merged and pushed.** The paths agents actually load resolve
-to the *main checkout*, never to your worktree:
+**Nothing here is live until it is merged, pushed and installed.** The Claude side ships as the
+`loop` plugin (LAB-80), and an installed plugin is a **version-stamped hard copy** under
+`~/.claude/plugins/cache/agent-workflow/loop/<version>/` — not a symlink. Editing a file in a
+worktree changes nothing any session loads, and neither does merging it, until:
 
-| Loaded path | Resolves to |
-| --- | --- |
-| `~/.claude/skills/<name>` | `~/Documents/Code/agent-workflow/claude/.claude/skills/<name>` |
-| `~/.claude/rules`, `~/.claude/scripts`, `~/.claude/hooks` | `~/Documents/Code/agent-workflow/claude/.claude/…` |
-| `~/.config/opencode/agents`, `opencode.jsonc`, `plugins` | `~/Documents/Code/agent-workflow/opencode/.config/opencode/…` |
+```
+claude plugin marketplace update agent-workflow && claude plugin update loop
+```
 
-So a skill, script or agent file edited in a worktree is not what any session loads, including
-the session editing it. Run this repo's own code **by path from the worktree root** —
-`python3 claude/.claude/scripts/test_jury.py`, never `~/.claude/scripts/test_jury.py` — or you
-exercise the copy you are not editing.
+| What | Delivered by | Live when |
+| --- | --- | --- |
+| `plugins/loop/` — skills, hooks, `jury.py`, the rules file | the `agent-workflow` marketplace | pushed **and** `plugin update` has run |
+| `claude/.claude/scripts/` — `inspect.sh`, `statusline.py` | stow | pushed (the symlink follows the main checkout) |
+| `opencode/.config/opencode/` — `juror.md`, `opencode.jsonc`, `plugins/` | stow | pushed; a **new** file needs `stow opencode` again |
 
-**And a brand-new file needs a re-stow.** `~/.claude/skills` is a real directory holding one
-symlink per skill, not a single folded symlink, because `dotfiles` still contributes the
-`sandbox` skill to the same directory and two stow trees cannot both fold it (LAB-79). Files
-*inside* an existing skill are live the moment they are pushed; a new skill, or a new rule,
-appears only after `stow claude` runs again.
+**Testing an edit needs neither.** `claude --plugin-dir ./plugins/loop` from the worktree root
+loads the copy you are editing for that session only — no install, no copy, and no effect on
+any other session. That is the answer to the whole class of problem this section used to
+describe, and it is why the jury skill's `Monitor` command names `${CLAUDE_PLUGIN_ROOT}`: the
+same command runs the installed runner or your worktree's, depending only on how the session
+started.
+
+Run this repo's own suites **by path from the worktree root** — `python3 tests/test_jury.py`.
 
 `juror.md` is the sharpest case, because nothing about it looks path-dependent: `opencode --agent
 juror` resolves the agent from `~/.config/opencode/agents/juror.md` whichever worktree the juror
@@ -46,11 +50,12 @@ opencode prefers a project-local agent over `~/.config/opencode/agents/`.
 
 **`glob` under-reports here, and says nothing.** opencode never passes `--hidden` to ripgrep,
 which prunes hidden directories before it matches — so *every* pattern misses them, not only one
-naming a dot directory. It is worse here than it was in `dotfiles`: a stow tree keeps 32 of this
-repo's 35 files under `.claude` or `.config`, so `**/*.md` returns 3 of 27. That is success with
-zero rows rather than an error, so no tool reports it and no impediment records it. `git ls-files`
-is the answer that holds in any session. The juror is given no `glob` at all (LAB-72); Claude
-sessions still have one.
+naming a dot directory. LAB-80 shrank this from a trap to a footnote: moving the loop out of the
+stow tree left only the two manifests, the remaining scripts and the opencode config under a dot
+directory, so almost every markdown file is now reachable. What is missed is still missed
+silently — success with zero rows, which no tool reports and no impediment records — so
+`git ls-files` remains the answer that holds in any session. The juror is given no `glob` at all
+(LAB-72); Claude sessions still have one.
 
 Secrets are never tracked.
 
@@ -61,10 +66,11 @@ sessions, including ones that would otherwise have loaded this file.
 
 | Path | Holds |
 | --- | --- |
-| `claude/.claude/skills/` | Skills, symlinked one directory at a time into `~/.claude/skills/`. **User-global** — they run in every repo. |
-| `claude/.claude/rules/` | `agent-workflow.md` — the spec-driven lifecycle and the conventions that carry it, loaded unconditionally in every repo from `~/.claude/rules/` (LAB-79). |
-| `claude/.claude/scripts/` | `jury.py` (the panel runner), its `test_jury.py`, `test_no_retry.mjs` (the juror plugin's suite — kept here rather than beside the plugin, because opencode loads every file in a plugin directory as a plugin), `statusline.py` (renders a running panel into the Claude Code status line), and `inspect.sh` — the fixed read-only verbs a juror's shell is limited to. |
-| `claude/.claude/hooks/` | `worktree-anchor-guard.sh`, a PreToolUse hook that blocks an edit aimed at a different worktree of the same repo. Invoked by `~/.claude/settings.json`, which `dotfiles` owns — one of the two references that cross the repo boundary (LAB-79); the other is the status line below. |
+| `.claude-plugin/marketplace.json` | Makes this repo a marketplace. One plugin, `loop`, sourced from `./plugins/loop`. |
+| `plugins/loop/` | The plugin: `skills/`, `hooks/`, `scripts/jury.py`, and `rules/agent-workflow.md`. `rules/` is **not** a recognised component directory — it is inert to auto-discovery and exists only as the `SessionStart` hook's payload. |
+| `plugins/loop/hooks/` | `worktree-anchor-guard.sh` (PreToolUse — blocks an edit aimed at a different worktree of the same repo) and `session-rules.sh` (SessionStart — emits the rules file as `additionalContext`). Both are wired in `hooks.json` inside the plugin, so neither is in `~/.claude/settings.json` any more. |
+| `claude/.claude/scripts/` | The two scripts that **cannot** live in the plugin, because configuration outside it names them by literal path: `inspect.sh`, named by `juror.md`'s bash allow patterns, which opencode matches as literal text; and `statusline.py`, named by `settings.json`'s `statusLine.command`, which `plugin.json` rejects as an unknown field. An installed plugin's path is version-stamped, so pointing either at it would break on every `plugin update`. |
+| `tests/` | `test_jury.py` and `test_no_retry.mjs`. Outside the plugin deliberately: the second tests the *opencode* plugin, and the first now spans both sides of the split above — `jury.py` inside the plugin, `statusline.py` outside it. |
 | `opencode/.config/opencode/` | `agents/juror.md`, `opencode.jsonc`, and `plugins/` — hooks that run inside a juror's own process, currently `no-retry.js` (LAB-71). |
 | `agents/in`, `agents/out` | Jury packs, juror reports, and each run's `<run>.progress.jsonl`. Untracked, and created relative to the directory the runner is invoked from. Each gets a `.gitignore` of `*` written by `ensure_ignored`, so reports are uncommittable in a *fresh clone* rather than only on a machine whose global git config happens to ignore `agents/`. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. |
 
@@ -172,11 +178,14 @@ How the rules resolve, measured against opencode 1.18.30 rather than taken from 
 - **A trailing `*` matches the bare command too** — measured: `git branch *` permitted a bare
   `git branch`, so one entry covers both forms.
 
-A juror can therefore read the worktree, load a skill, run those verbs, and write its own
-report. What it cannot check is a claim about the *installed* copy of an agent or script: those
-resolve to the main checkout, outside the worktree, and only `~/.claude/skills/` is readable
-there — enough for the standards a form review needs, and nothing more. Widening that is
-LAB-38's call; LAB-40 covers scoping skill access.
+A juror can therefore read the worktree, load a skill from it, run those verbs, and write its
+own report. What it cannot check is a claim about the *installed* copy of an agent or script:
+those resolve outside the worktree. **LAB-80 narrowed that further**, and the block has not been
+revisited for it — the installed skills are now a version-stamped copy under
+`~/.claude/plugins/cache/`, which the `read` block's `*/.claude/skills/*` entry does not match,
+so that entry reaches only the `sandbox` skill `dotfiles` contributes. Reviewing a plan or a
+diff needs the worktree and nothing else, so nothing is broken by it; it is dead weight rather
+than a gap. Widening is LAB-38's call; LAB-40 covers scoping skill access.
 
 **Jurors are opencode processes, not Claude sessions**, so Claude's own sandbox and
 permission settings do not govern them. This config is all that shapes what they reach for —
@@ -188,11 +197,16 @@ prompt applies the same rule to the artifact under review.
 `opencode.jsonc` currently has no skill scoping, so every agent can load every skill on the
 machine.
 
-## Skills are user-global
+## Skills travel with the plugin
 
-A skill here runs against the other repos too. Nothing repo-specific belongs in one, and
-material a skill defers belongs in that skill's own `references/` directory — not in this
-file, which those repos never see.
+A skill here runs in every repo that enables the `loop` plugin, and it is invoked **namespaced**
+— `/loop:plan`, not `/plan`. Nothing repo-specific belongs in one, and material a skill defers
+belongs in that skill's own `references/` directory — not in this file, which those repos never
+see.
+
+Reach is now a per-repo decision rather than a property of this machine: installed at user scope
+the plugin is everywhere, and enabled at project scope through a repo's committed
+`.claude/settings.json` it travels to any session that clones that repo, this Mac or not.
 
 ## Languages
 
@@ -211,8 +225,9 @@ change, not a detail.
 ## Testing
 
 ```
-python3 claude/.claude/scripts/test_jury.py
-node claude/.claude/scripts/test_no_retry.mjs
+python3 tests/test_jury.py
+node tests/test_no_retry.mjs
+claude plugin validate plugins/loop --strict && claude plugin validate .
 ```
 
 Two suites because the code is in two languages: the runner is Python, and the juror's plugin
@@ -223,9 +238,13 @@ The plugin suite drives its hooks directly rather than convening a panel. A mode
 repeat itself on demand — asked to make a refused call twelve times it made four, then stopped
 and wrote its report — so a panel cannot reach the blocking path at all (LAB-71).
 
-**By path, from the worktree root.** `~/.claude/scripts/` resolves to the main checkout, so the
-habitual `python3 ~/.claude/scripts/test_jury.py` exercises the copy you are not editing — and
-passes while your change is still broken. Use that form only to confirm a merge landed.
+**By path, from the worktree root.** The suites import `jury.py` and `statusline.py` by relative
+path, so running them from anywhere else exercises whatever that path resolves to rather than
+what you are editing.
+
+**The validator is a check, not a formality.** `--strict` fails on a missing author and on any
+field Claude Code would silently ignore at load time — which is how `statusLine` was found not
+to be a plugin component at all.
 
 No test framework, deliberately: it must run anywhere the jury does, with nothing installed.
 Every test exists because a real run broke, and names the iteration it came from — so a
@@ -238,4 +257,7 @@ loop — why review is cross-vendor, the panel's calibration target, the contain
 model — lives on the **Loop engineering** project.
 
 Machine configuration lives in `dotfiles`, which also keeps the `sandbox` skill and the
-`~/.claude/settings.json` that invokes this repo's hook.
+`~/.claude/settings.json` naming this repo's `statusline.py` in the status-line slot. That slot
+is now the **only** reference crossing the repo boundary: LAB-80 moved the worktree guard into
+the plugin's own `hooks.json`, and a repo enabling the loop declares it in its own committed
+`.claude/settings.json` rather than in a file `dotfiles` owns.
