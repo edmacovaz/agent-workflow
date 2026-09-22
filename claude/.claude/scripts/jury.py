@@ -733,13 +733,26 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
             jurors.append({"model": model, "returned": False, "parse_ok": False,
                            "error": f"launch failed: {exc}"})
             progress("launch_failed",
-                     f"NO REPORT from {model.split('/')[-1]} — launch failed", model=model)
+                     f"NO REPORT from {model.split('/')[-1]} — launch failed",
+                     model=model, artifact=name)
     if pending:
-        progress("dispatched", f"{len(pending)} juror{'s' * (len(pending) != 1)} dispatched")
+        # `artifact` and `pid` are written for the status line, which has to answer two
+        # questions this file could not: one progress file covers every artifact of a run, so
+        # without the first it reads artifact 1's settled jurors as artifact 2's state; and
+        # without the second it has only mtime to tell a live panel from a SIGKILLed one, which
+        # writes no `settled` at all. Both facts were here and simply never recorded (LAB-86).
+        progress("dispatched", f"{len(pending)} juror{'s' * (len(pending) != 1)} dispatched",
+                 artifact=name, pid=os.getpid())
+        # one round now, not in a minute's time: the wait writes these every REPORT_EVERY_S, so
+        # without this the display opens on a bare header and names no juror until the first
+        # interval elapses — the panel's least informative minute (LAB-86 review)
+        for juror in pending:
+            record("working", working_line(juror["model"], juror, time.monotonic()),
+                   model=juror["model"], artifact=name)
 
     wrote = time.monotonic()
     try:
-        wait_out(jurors, pending, deadline, wrote, len(models), settled)
+        wait_out(jurors, pending, deadline, wrote, len(models), settled, artifact=name)
     finally:
         # every juror dispatched gets a row and every child gets killed, however the wait
         # ended: a result that omits them reads as a smaller panel that did better than it did.
@@ -754,7 +767,7 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
             row = headless_row(juror, None, killed=True,
                                why="the run stopped before it finished")
             jurors.append(row)
-            progress(*headless_line(row), model=juror["model"])
+            progress(*headless_line(row), model=juror["model"], artifact=name)
         reported = [j for j in jurors if j.get("parse_ok")]
         impeded = impediment_rollup(jurors)
         spend = spend_rollup(jurors)
@@ -768,7 +781,7 @@ def run_headless(models, artifact, intent, standard, out, run_id, root, timeout_
         announce_spend(name, spend)
 
 
-def wait_out(jurors, pending, deadline, wrote, total=None, settled=None):
+def wait_out(jurors, pending, deadline, wrote, total=None, settled=None, artifact=None):
     """Wait on the jurors, appending each into `jurors` as its process ends. The deadline is the
     only stop rule; everything read from an event stream is reported and never acted on.
 
@@ -803,14 +816,48 @@ def wait_out(jurors, pending, deadline, wrote, total=None, settled=None):
             kind, line = headless_line(
                 row, len([j for j in jurors if j.get("parse_ok")]), total)
             progress("timeout" if rc is None and not row["parse_ok"] else kind, line,
-                     model=juror["model"])
+                     model=juror["model"], artifact=artifact)
         if pending and now - wrote >= REPORT_EVERY_S:
             for juror in pending:
                 # file only: a heartbeat printed is a conversation turn, and a panel that
                 # took one per juror per minute buried its own reports in commentary (LAB-75)
                 record("working", working_line(juror["model"], juror, now),
-                       model=juror["model"])
+                       model=juror["model"], artifact=artifact)
             wrote = now
+
+
+def check_display(settings=None, script=None):
+    """Say so, once, when the status line no longer renders the panel.
+
+    Orca rewrites `~/.claude/settings.json` in place on upgrade — `dotfiles` commit 3635996 is
+    that event on the record — and the failure is silent in the worst way: the panel runs
+    exactly as before while the caller's only live view of it is gone. Printed rather than
+    recorded, because the file a recorded line lands in is the one nothing is rendering.
+
+    Checked here rather than by the agent: the settings file is 39.9KB, so reading it into a
+    session cost about 11k tokens a panel for a check that almost always passes (LAB-86).
+
+    Named *and* present, because they fail separately: the slot can name a script that is not
+    there, which is every machine where the change has not merged — `~/.claude/scripts/`
+    resolves to the main checkout. Checking only the name passed a run that rendered nothing,
+    which is the failure this exists to catch (LAB-86 review).
+
+    Both paths are arguments so the branches can be tested without writing to the real ones."""
+    settings = settings or os.path.expanduser("~/.claude/settings.json")
+    script = script or os.path.expanduser("~/.claude/scripts/statusline.py")
+    try:
+        with open(settings) as fh:
+            command = (json.load(fh).get("statusLine") or {}).get("command", "")
+    except (OSError, ValueError):
+        return                       # no readable settings is not evidence either way
+    if "statusline.py" not in command:
+        progress("display_missing",
+                 "Panel display not installed — statusLine does not name statusline.py, "
+                 "so this run will not render anywhere")
+    elif not os.path.exists(script):
+        progress("display_missing",
+                 f"Panel display named but not installed — {script} does not exist, "
+                 "so this run will not render anywhere")
 
 
 def announce_walls(name, impeded, attempted, reported):
@@ -828,9 +875,10 @@ def announce_walls(name, impeded, attempted, reported):
                  + (f"; {len(impeded['silent'])} juror"
                     f"{'s' * (len(impeded['silent']) != 1)} did not answer"
                     if impeded["silent"] else ""),
-                 walls=len(impeded["walls"]))
+                 walls=len(impeded["walls"]), artifact=name)
     if not reported:
-        progress("no_verdict", f"{name}: NO VERDICT — none of {attempted} jurors reported")
+        progress("no_verdict", f"{name}: NO VERDICT — none of {attempted} jurors reported",
+                 artifact=name)
 
 
 def announce_spend(name, spend):
@@ -846,7 +894,7 @@ def announce_spend(name, spend):
              f"{'s' * (spend['calls'] != 1)}"
              + (f"; no cost read for {len(missing)} juror"
                 f"{'s' * (len(missing) != 1)}" if missing else ""),
-             cost=spend["cost"])
+             cost=spend["cost"], artifact=name)
 
 
 def main():
@@ -895,6 +943,7 @@ def main():
         # finally writes, so anything failing before it leaves them waiting forever
         ensure_ignored(args.out)     # jurors write here, and the caller watches it
         check_models(args.models)    # an unresolvable id degrades the panel silently
+        check_display()              # the caller's view of the run, which fails silently
         for artifact, intent in zip(args.artifact, args.intent):
             run_headless(args.models, artifact, intent, args.standard,
                          args.out, run_id, root, args.timeout_ms, results)

@@ -62,6 +62,8 @@ Each juror is a bounded `opencode run` that exits when it is done.
 
 Then say what you started — `4 jurors dispatched`. **Offer no time.**
 
+**The caller watches the panel in the status line**, which renders `agents/out/<run>.progress.jsonl` in place and costs no turn (LAB-86). The runner checks that slot itself and prints one line if the display is not installed — Orca rewrites `~/.claude/settings.json` in place on upgrade, and the panel runs on regardless, so nothing else would say so. Pass that line on and carry on with the panel; restoring the display is a `dotfiles` change, not something to do mid-run.
+
 **While the panel runs, stay out of its way.** Every event you get is a change of state — a report landing or the run settling. Heartbeats go to the progress file and never reach you, so a quiet stretch is the panel working, not a panel to comment on.
 
 - **One line per landing and nothing else**: the model, returned or absent, and the count against the panel size. The caller has already seen the runner's own line, so do not repeat it.

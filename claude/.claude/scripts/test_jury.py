@@ -22,6 +22,7 @@ against run_headless/main instead.
 import importlib.util, json, os, re, subprocess, sys, tempfile
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jury.py")
+STATUSLINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "statusline.py")
 
 
 def load():
@@ -31,6 +32,44 @@ def load():
     spec.loader.exec_module(m)
     m.event = lambda msg: None
     return m
+
+
+def load_statusline():
+    """The status-line renderer (LAB-86). It reads the file jury.py writes, so it is tested
+    beside it: the JSONL schema is the only thing they share, and a change to one that breaks
+    the other should fail here rather than in a live panel."""
+    spec = importlib.util.spec_from_file_location("statusline", STATUSLINE)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def progress_file(*rows, name="LAB-1-20260921-120000-1234"):
+    """A run's progress file, written the way jury.py's record() writes one."""
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, f"{name}.progress.jsonl")
+    with open(path, "w") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+    return path
+
+
+def working(model, message, artifact=None):
+    row = {"t": "2026-09-21T12:00:00", "kind": "working", "message": message, "model": model}
+    return {**row, "artifact": artifact} if artifact else row
+
+
+def rendered(text):
+    """What the caller actually sees. Claude Code puts a status line through
+    `stdout.trim().split("\\n").flatMap(d => d.trim() || []).join("\\n")` before rendering it,
+    so anything this drops was never on screen — an indent written here included (LAB-86)."""
+    return [l for l in (x.strip() for x in text.strip().split("\n")) if l]
+
+
+def dead_pid():
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
 
 
 def repo():
@@ -1643,6 +1682,262 @@ def test_glob_is_denied_because_it_answers_wrongly_instead_of_refusing():
     dotted path, and success with zero rows is the one failure `impediments` cannot record (LAB-72)."""
     keys, _ = juror_permissions()
     assert dict(keys)["glob"] == "deny", "glob is granted; it under-reports silently"
+
+
+def test_a_settled_panel_shows_nothing():
+    """The outcome says the display shows nothing when no panel is running, and a settled panel
+    is not a running one — from there the agent's own report carries it (LAB-86)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched"},
+        working("opencode-go/qwen3.7-plus", "qwen3.7-plus — running 60s, last read a.py"),
+        {"kind": "settled", "message": "Panel completed — findings in agents/out/x.json"})
+    assert m.render(path) == "", m.render(path)
+
+
+def test_no_panel_at_all_shows_nothing():
+    """Every session on the machine runs this several times a minute, and almost none of them
+    have a panel. A missing or empty file is the ordinary case, not an error (LAB-86)."""
+    m = load_statusline()
+    assert m.render("/nonexistent/x.progress.jsonl") == ""
+    assert m.render(progress_file()) == ""
+
+
+def test_every_working_juror_gets_its_own_line():
+    """One line per juror, because the status line renders newlines as a column while a single
+    line is truncated at the terminal edge and never wrapped — so a four-juror panel on one
+    line loses whatever does not fit, which is the targets (LAB-86)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched"},
+        {"kind": "returned", "message": "luna returned in 55s — 1 of 4",
+         "model": "opencode-go/gpt-5.6-luna"},
+        working("opencode-go/deepseek-v4-flash", "deepseek-v4-flash — running 60s, last read a.py (×3)"),
+        working("opencode-go/qwen3.7-plus", "qwen3.7-plus — running 60s, last read b.swift"),
+        working("opencode-go/glm-5.3-flash", "glm-5.3-flash — running 60s, last grep neon"))
+    lines = m.render(path).split("\n")
+    assert lines[0] == "⚖ LAB-1 — 1 of 4 reported", lines[0]
+    assert len(lines) == 4, lines
+    # the runner's own line, verbatim: reformatting it here would be a second copy of
+    # working_line()'s format, free to drift from the one jury.py actually writes
+    assert lines[1] == "deepseek-v4-flash — running 60s, last read a.py (×3)", lines[1]
+    assert not any("gpt-5.6-luna" in l for l in lines[1:]), "a juror that reported is not working"
+
+
+def test_a_torn_final_line_does_not_cost_the_display():
+    """The runner appends while this reads, both several times a minute, so catching a
+    half-written line is routine. Losing the whole display to it would make the display
+    flicker exactly when the panel is busiest (LAB-86)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched"},
+        working("opencode-go/qwen3.7-plus", "qwen3.7-plus — running 60s, last read a.py"))
+    with open(path, "a") as fh:
+        fh.write('{"t": "2026-09-21T12:01:0')
+    assert m.render(path).split("\n")[1] == "qwen3.7-plus — running 60s, last read a.py"
+
+
+def test_a_runner_that_stopped_writing_says_so():
+    """A juror line is written every 60s, so a file that has gone quiet for minutes is a runner
+    that died rather than a panel between heartbeats. Vanishing would read as a panel that
+    finished, which is the one thing it did not do (LAB-86)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched"},
+        working("opencode-go/qwen3.7-plus", "qwen3.7-plus — running 60s, last read a.py"))
+    head = m.render(path, now=os.path.getmtime(path) + 8 * 60).split("\n")[0]
+    assert head == "⚖ LAB-1 — 0 of 4 reported · last change 8m ago", head
+
+
+def test_a_kind_this_does_not_know_is_ignored():
+    """LAB-83 adds `spend` rows to the same file. A renderer that had to be told about every
+    kind would break on the next one; unknown kinds are data it does not act on (LAB-86)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched"},
+        {"kind": "spend", "message": "LAB-1.artifact: $0.1719 over 39 steps", "cost": 0.1719},
+        working("opencode-go/qwen3.7-plus", "qwen3.7-plus — running 60s, last read a.py"))
+    lines = m.render(path).split("\n")
+    assert len(lines) == 2, lines
+    assert "$0.17" not in m.render(path)
+
+
+def test_a_juror_that_never_reported_is_not_counted_as_reporting():
+    """`absent` and `timeout` settle a juror without a verdict. Counting them as reported made
+    a panel where all four died read `4 of 4 reported` — four verdicts claimed where none
+    landed, and the last thing the caller saw before the line vanished (LAB-86 review)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched", "pid": os.getpid()},
+        {"kind": "returned", "message": "luna returned in 55s", "model": "a"},
+        {"kind": "absent", "message": "NO REPORT from b", "model": "b"},
+        {"kind": "timeout", "message": "NO REPORT from c — killed at the 1801s timeout",
+         "model": "c"},
+        working("d", "d — running 60s, last read x.py"))
+    head = m.render(path).split("\n")[0]
+    assert head == "⚖ LAB-1 — 1 of 4 reported, 2 absent", head
+
+
+def test_a_second_artifacts_jurors_still_render():
+    """One progress file covers every artifact of a run, and the same four models review each.
+    Read as one panel, artifact 1's settled jurors counted against artifact 2 — every live
+    juror filtered out and the header frozen at `4 of 4`, which is what a finished panel looks
+    like, for up to the backstop (LAB-86 review)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "2 jurors dispatched", "artifact": "one",
+         "pid": os.getpid()},
+        {"kind": "returned", "message": "a returned in 30s", "model": "a", "artifact": "one"},
+        {"kind": "returned", "message": "b returned in 40s", "model": "b", "artifact": "one"},
+        {"kind": "dispatched", "message": "2 jurors dispatched", "artifact": "two",
+         "pid": os.getpid()},
+        working("a", "a — running 60s, last read x.py", artifact="two"),
+        working("b", "b — running 60s, last grep y", artifact="two"))
+    lines = m.render(path).split("\n")
+    assert lines[0] == "⚖ LAB-1 — 0 of 2 reported", lines[0]
+    assert len(lines) == 3, lines
+
+
+def test_a_run_whose_process_is_gone_shows_nothing():
+    """A SIGKILLed runner writes no `settled` — that is in a `finally`, which SIGKILL skips —
+    and nothing prunes `agents/out`, so its file stays newest in the directory. Asking the OS
+    about the pid settles it; mtime only guessed, and guessed for half an hour (LAB-86)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched", "pid": dead_pid()},
+        working("a", "a — running 60s, last read x.py"))
+    assert m.render(path) == "", m.render(path)
+
+
+def test_the_juror_line_survives_the_status_lines_own_trim():
+    """The status line trims every line before rendering it, so an indent written here is
+    dropped before anyone sees it. Asserting the emitted string hid that; this asserts what
+    reaches the screen (LAB-86 review)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched", "pid": os.getpid()},
+        working("a", "a — running 60s, last read x.py"))
+    shown = rendered(m.render(path))
+    assert shown == ["⚖ LAB-1 — 0 of 4 reported", "a — running 60s, last read x.py"], shown
+
+
+def test_the_runner_writes_what_the_display_reads():
+    """The writer and the reader meeting on a real file, not on hand-built rows.
+
+    Every other display test calls render() with rows the test wrote, so a regression in what
+    jury.py records — or a wrong assumption about it — would render nothing while the whole
+    suite stayed green. That is the same shape of gap that let the artifact and pid defects
+    ship in the first place (LAB-86 review)."""
+    m, sl = load(), load_statusline()
+    d = repo()
+    cwd = os.getcwd()
+    try:
+        os.chdir(d)
+        m.check_models = lambda models: None
+        m.check_display = lambda *a, **k: None
+        m.opencode_exe = lambda: "opencode"
+
+        def launch(exe, model, spec, rep, root, o, run_id, name):
+            open(rep, "w").write(json.dumps({"verdict": "pass", "findings": [],
+                                             "impediments": []}))
+            open(f"{o}/e.json", "w").write("")
+            return {"model": model, "proc": FakeProc([0]), "report": rep,
+                    "events": f"{o}/e.json", "stderr": f"{o}/e.json", "handles": (),
+                    "started": 0}
+
+        m.launch_juror = launch
+        m.POLL_S = 0
+        sys.argv = ["jury", "--artifact", "a.md", "--intent", "i.md", "--standard", "plan",
+                    "--run-id", "W-20260921-120000-1", "--out", "out", "--models", "m/alpha"]
+        m.main()
+        path = os.path.join(d, "out", "W-20260921-120000-1.progress.jsonl")
+        rows = [json.loads(l) for l in open(path) if l.strip()]
+    finally:
+        os.chdir(cwd)
+
+    dispatched = [r for r in rows if r["kind"] == "dispatched"]
+    assert dispatched and dispatched[0].get("pid") == os.getpid(), dispatched
+    assert dispatched[0].get("artifact") == "a", dispatched
+    # the display opens on this one, a minute before the wait would write any
+    assert [r for r in rows if r["kind"] == "working" and r.get("artifact") == "a"], rows
+    # every row the panel phase writes is attributable, the spend row included
+    unnamed = [r["kind"] for r in rows if r["kind"] not in ("settled",) and not r.get("artifact")]
+    assert not unnamed, unnamed
+
+    # and the reader makes sense of it. Kept: what the file held before the juror returned —
+    # a settled panel renders nothing, and a juror that reported is not one still working
+    live = [r for r in rows if r["kind"] in ("dispatched", "working")]
+    with open(path, "w") as fh:
+        for r in live:
+            fh.write(json.dumps(r) + "\n")
+    shown = rendered(sl.render(path))
+    assert shown[0] == "⚖ W — 0 of 1 reported", shown
+    assert len(shown) == 2 and "alpha" in shown[1], shown
+
+
+def test_the_display_finds_the_run_from_the_payload():
+    """newest_progress reads Claude Code's own status-line payload, so its shape is an
+    assumption this repo cannot check anywhere else. Wrong keys render nothing, silently, on
+    every machine at once (LAB-86 review)."""
+    m = load_statusline()
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "agents", "out"))
+    old = os.path.join(d, "agents/out", "OLD-20260921-100000-1.progress.jsonl")
+    new = os.path.join(d, "agents/out", "NEW-20260921-110000-2.progress.jsonl")
+    for p in (old, new):
+        open(p, "w").write(json.dumps({"kind": "dispatched", "message": "4 jurors"}) + "\n")
+    os.utime(old, (1, 1))
+    assert m.newest_progress({"workspace": {"current_dir": d}}) == new
+    assert m.newest_progress({"workspace": {"project_dir": d}}) == new
+    assert m.newest_progress({"workspace": {"current_dir": "/nonexistent"}}) is None
+    assert m.newest_progress({}) is None          # a payload without a workspace is not a crash
+
+
+def test_the_runner_says_when_the_display_is_not_installed():
+    """Named and present fail separately, and only the second was checked at first — so a run
+    that rendered nowhere passed the guard quietly, which is the failure it exists to catch
+    (LAB-86 review)."""
+    m = load()
+    said = []
+    m.progress = lambda kind, msg, **kw: said.append((kind, msg))
+    d = tempfile.mkdtemp()
+    script = os.path.join(d, "statusline.py")
+    named = os.path.join(d, "named.json")
+    open(named, "w").write(json.dumps({"statusLine": {"command": f"python3 {script}"}}))
+    orca = os.path.join(d, "orca.json")
+    open(orca, "w").write(json.dumps({"statusLine": {"command": "orca-statusline.sh"}}))
+
+    open(script, "w").write("#")
+    m.check_display(settings=named, script=script)
+    assert said == [], said                       # named, and there: nothing to say
+
+    os.remove(script)
+    m.check_display(settings=named, script=script)
+    assert said and said[-1][0] == "display_missing", said
+    assert "does not exist" in said[-1][1], said
+
+    said.clear()
+    m.check_display(settings=orca, script=script)
+    assert said and "does not name statusline.py" in said[-1][1], said
+
+    said.clear()
+    m.check_display(settings=os.path.join(d, "gone.json"), script=script)
+    assert said == [], said                       # unreadable settings is not evidence either way
+
+
+def test_the_display_never_fails_the_slot():
+    """It runs in every session on the machine, several times a minute, and almost never has a
+    panel to show. A payload it cannot parse must still exit 0 having printed nothing — a
+    traceback here lands somewhere the caller cannot dismiss (LAB-86).
+
+    What this cannot cover is the forward to Orca: that lives in the settings command, in
+    `dotfiles`, precisely so that this file being absent cannot take Orca's telemetry with
+    it — so there is nothing here to test it against."""
+    done = subprocess.run([sys.executable, STATUSLINE], input="not json at all",
+                          text=True, capture_output=True)
+    assert done.returncode == 0, done
+    assert done.stdout == "", done.stdout
+    assert done.stderr == "", done.stderr
 
 
 def main():

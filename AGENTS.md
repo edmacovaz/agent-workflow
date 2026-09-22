@@ -63,8 +63,8 @@ sessions, including ones that would otherwise have loaded this file.
 | --- | --- |
 | `claude/.claude/skills/` | Skills, symlinked one directory at a time into `~/.claude/skills/`. **User-global** — they run in every repo. |
 | `claude/.claude/rules/` | `agent-workflow.md` — the spec-driven lifecycle and the conventions that carry it, loaded unconditionally in every repo from `~/.claude/rules/` (LAB-79). |
-| `claude/.claude/scripts/` | `jury.py` (the panel runner), its `test_jury.py`, `test_no_retry.mjs` (the juror plugin's suite — kept here rather than beside the plugin, because opencode loads every file in a plugin directory as a plugin), and `inspect.sh` — the fixed read-only verbs a juror's shell is limited to. |
-| `claude/.claude/hooks/` | `worktree-anchor-guard.sh`, a PreToolUse hook that blocks an edit aimed at a different worktree of the same repo. Invoked by `~/.claude/settings.json`, which `dotfiles` owns — the one reference that crosses the repo boundary (LAB-79). |
+| `claude/.claude/scripts/` | `jury.py` (the panel runner), its `test_jury.py`, `test_no_retry.mjs` (the juror plugin's suite — kept here rather than beside the plugin, because opencode loads every file in a plugin directory as a plugin), `statusline.py` (renders a running panel into the Claude Code status line), and `inspect.sh` — the fixed read-only verbs a juror's shell is limited to. |
+| `claude/.claude/hooks/` | `worktree-anchor-guard.sh`, a PreToolUse hook that blocks an edit aimed at a different worktree of the same repo. Invoked by `~/.claude/settings.json`, which `dotfiles` owns — one of the two references that cross the repo boundary (LAB-79); the other is the status line below. |
 | `opencode/.config/opencode/` | `agents/juror.md`, `opencode.jsonc`, and `plugins/` — hooks that run inside a juror's own process, currently `no-retry.js` (LAB-71). |
 | `agents/in`, `agents/out` | Jury packs, juror reports, and each run's `<run>.progress.jsonl`. Untracked, and created relative to the directory the runner is invoked from. Each gets a `.gitignore` of `*` written by `ensure_ignored`, so reports are uncommittable in a *fresh clone* rather than only on a machine whose global git config happens to ignore `agents/`. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. |
 
@@ -86,6 +86,43 @@ Check Orca's current threshold rather than assuming a number.
 `juror.md` declares no model. An unresolvable `-m` therefore fails loudly instead of falling
 back to the agent's default and silently degrading the panel to fewer families than it
 reports.
+
+## The panel display
+
+While a panel runs, the caller watches it in the **Claude Code status line**, not in the
+conversation: `statusline.py` renders `agents/out/<run>.progress.jsonl` in place, costing no
+agent turn (LAB-86). That surface was chosen by measurement — a background subagent absorbing
+the same 45 progress lines spent ~48k tokens *per line*, including the heartbeats it was
+correctly told to say nothing about, because a Monitor event forces a turn whether or not the
+agent speaks.
+
+**The slot is shared with Orca, and the sharing is what makes it fragile.** Orca's own
+status-line script POSTs the payload to its hook port so the pane knows what the session is
+doing, and prints nothing. Two consequences:
+
+- **The settings command forwards to Orca first, then to `statusline.py`.** The forward lives
+  in the command rather than in the script deliberately: `~/.claude/scripts/` resolves to the
+  main checkout, so this file does not exist on a machine where the change has not merged, and
+  a forward inside it would take Orca's telemetry down with it. That is not hypothetical — it
+  happened while LAB-86 was being built, and the ordering is the fix.
+- **The command is in `~/.claude/settings.json`, which `dotfiles` owns and Orca rewrites in
+  place on upgrade.** So the display is not delivered by this repo alone, and an Orca upgrade
+  removes it silently — the panel runs exactly as before and nothing renders. `jury.py`'s
+  `check_display` reads the slot at dispatch and prints one line when it no longer names
+  `statusline.py`. It lives in the runner rather than the skill because the settings file is
+  ~40KB: read into a session, that check cost about 11k tokens a panel to almost always pass.
+  Nothing here can test the forward, since it lives in the other repo. That command is also
+  POSIX-only, dropping the Windows branches Orca's carried — deliberate, because `dotfiles` is
+  a macOS-only setup, and the thing to undo first if that changes.
+
+**The progress file carries state, not only events.** `dispatched` rows carry `pid`, and every
+row in `run_headless` carries `artifact`. Neither is for the runner; both exist because a
+display that reconstructs state from an event log guesses, and the guesses were wrong. One file
+covers every artifact of a run, so without `artifact` the renderer read artifact 1's settled
+jurors as artifact 2's state — a frozen `4 of 4` with no juror lines, indistinguishable from a
+finished panel. And liveness is a fact about a process: a SIGKILLed runner writes no `settled`,
+so mtime alone would have shown a dead panel as live for half an hour (LAB-86). Add a field
+rather than a rule when the runner already knows the answer.
 
 ## Working on the juror
 
