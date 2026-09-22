@@ -23,13 +23,21 @@ panel is running, or a header line plus one line per juror still working.
 """
 import json, os, re, sys, time
 
-# A juror's line is written every 60s, so a file older than this stopped being written to
-# rather than being quiet between heartbeats.
-STALE_AFTER = 150
+# `LAB-83-diff-20260921-205609-54672` -> `LAB-83-diff`. The run id is built by the jury skill as
+# `<ISSUE>-<timestamp>-<pid>`; jury.py takes `--run-id` verbatim and falls back to a bare
+# `<timestamp>-<pid>`, which this deliberately does not match — there is no name in it to show.
+RUN_ID = re.compile(r"^(.+)-\d{8}-\d{6}")
 
-# `LAB-83-diff-20260921-205609-54672` -> `LAB-83-diff`. The timestamp is what jury.py appends
-# to make a run id unique, so it is the seam; everything before it is what the caller named.
-RUN_ID = re.compile(r"^(.*?)-\d{8}-\d{6}")
+# Only a juror that wrote a verdict has *reported*. `absent` and `timeout` settle a juror
+# without one, and the jury skill keeps those apart for the same reason: a panel where every
+# juror died must never read as four verdicts landing.
+REPORTED = ("returned",)
+SETTLED = ("returned", "absent", "timeout")
+
+# Fallbacks, used only for a file written before jury.py recorded `artifact` and `pid`. Both
+# are guesses at facts the runner now states outright, so neither governs a current run.
+STALE_AFTER = 150            # a juror line is written every 60s
+ABANDONED_AFTER = 40 * 60    # past the runner's own 30-minute backstop, nothing is coming
 
 
 def newest_progress(payload):
@@ -78,10 +86,37 @@ def rows_of(path):
     return rows
 
 
-# A juror stops being live when its row says it settled, however it settled. Kinds this does
-# not know are ignored rather than guessed at, which is what let LAB-83's `spend` rows appear
-# without this needing to be told about them.
-SETTLED = ("returned", "absent", "timeout")
+def current_artifact(rows):
+    """The rows belonging to the artifact being reviewed now.
+
+    One progress file covers a whole run, and a run reviews each `--artifact` in turn with the
+    same four models. Reading the file as one panel made artifact 1's settled jurors count
+    against artifact 2 — every live juror filtered out, the header frozen at `4 of 4`, for up
+    to the backstop. `artifact` on each row is jury.py saying which is which (LAB-86)."""
+    named = [r for r in rows if r.get("artifact")]
+    if not named:
+        return rows                  # a file from before the field existed: one panel, as read
+    return [r for r in rows if r.get("artifact") == named[-1]["artifact"]]
+
+
+def is_running(rows, path, now):
+    """Whether the panel is still alive, and how stale its last line is.
+
+    A SIGKILLed runner writes no `settled` — that is written in a `finally`, which SIGKILL
+    skips — and nothing prunes `agents/out`, so its file stays the newest one in the directory.
+    Asking the OS about the runner's pid answers this outright; mtime only ever guessed, and
+    guessed for up to half an hour (LAB-86)."""
+    age = int(now - os.path.getmtime(path))
+    pid = next((r["pid"] for r in reversed(rows) if isinstance(r.get("pid"), int)), None)
+    if pid is None:
+        return age < ABANDONED_AFTER, age      # pre-`pid` file: the old guess, bounded
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False, age
+    except OSError:
+        pass                         # EPERM: a live process this user may not signal
+    return True, age
 
 
 def render(path, now=None):
@@ -92,37 +127,44 @@ def render(path, now=None):
     rows = rows_of(path)
     if not rows or any(r.get("kind") == "settled" for r in rows):
         return ""
+    now = time.time() if now is None else now
+    try:
+        running, age = is_running(rows, path, now)
+    except OSError:
+        return ""
+    if not running:
+        return ""
+    rows = current_artifact(rows)
 
-    reported = {r.get("model") for r in rows if r.get("kind") in SETTLED}
+    settled = {r.get("model") for r in rows if r.get("kind") in SETTLED}
+    settled.discard(None)
+    reported = {r.get("model") for r in rows if r.get("kind") in REPORTED}
     reported.discard(None)
     live = {}
     for r in rows:
-        if r.get("kind") == "working" and r.get("model") not in reported:
+        if r.get("kind") == "working" and r.get("model") not in settled:
             live[r["model"]] = r.get("message", "")
 
     dispatched = next((r["message"] for r in rows if r.get("kind") == "dispatched"), "")
     head = re.match(r"\s*(\d+)", dispatched)
     # the count of models dispatched, falling back to what has been seen: a panel that named
     # no total is still worth rendering, and `N of ?` says which half is missing
-    total = head.group(1) if head else (len(reported | set(live)) or "?")
+    total = head.group(1) if head else (len(settled | set(live)) or "?")
 
     run = os.path.basename(path)[: -len(".progress.jsonl")]
     name = RUN_ID.match(run)
-    out = [f"⚖ {name.group(1) if name else run} — {len(reported)} of {total} reported"]
-
-    try:
-        age = int((now or time.time()) - os.path.getmtime(path))
-    except OSError:
-        age = 0
+    line = f"⚖ {name.group(1) if name else run} — {len(reported)} of {total} reported"
+    absent = len(settled) - len(reported)
+    if absent > 0:
+        line += f", {absent} absent"
     if age > STALE_AFTER:
-        # a runner that died leaves its last state behind looking live, and a display that
-        # simply vanished would read as a panel that finished
-        out[0] += f" · last change {age // 60}m ago"
+        # the runner is alive but has not written for minutes; say so rather than showing a
+        # stale juror line as though it were current
+        line += f" · last change {age // 60}m ago"
 
-    # the runner's own line, verbatim. Reformatting it here would be a second copy of
-    # working_line()'s format, free to drift from the one jury.py actually writes.
-    out += [f"  {message}" for message in live.values() if message]
-    return "\n".join(out)
+    # the runner's own line, verbatim, and unindented: the status line renders each line
+    # through `d.trim()`, so leading space is dropped before anyone sees it.
+    return "\n".join([line] + [m for m in live.values() if m])
 
 
 def main():

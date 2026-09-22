@@ -54,8 +54,22 @@ def progress_file(*rows, name="LAB-1-20260921-120000-1234"):
     return path
 
 
-def working(model, message):
-    return {"t": "2026-09-21T12:00:00", "kind": "working", "message": message, "model": model}
+def working(model, message, artifact=None):
+    row = {"t": "2026-09-21T12:00:00", "kind": "working", "message": message, "model": model}
+    return {**row, "artifact": artifact} if artifact else row
+
+
+def rendered(text):
+    """What the caller actually sees. Claude Code puts a status line through
+    `stdout.trim().split("\\n").flatMap(d => d.trim() || []).join("\\n")` before rendering it,
+    so anything this drops was never on screen — an indent written here included (LAB-86)."""
+    return [l for l in (x.strip() for x in text.strip().split("\n")) if l]
+
+
+def dead_pid():
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
 
 
 def repo():
@@ -1706,7 +1720,7 @@ def test_every_working_juror_gets_its_own_line():
     assert len(lines) == 4, lines
     # the runner's own line, verbatim: reformatting it here would be a second copy of
     # working_line()'s format, free to drift from the one jury.py actually writes
-    assert lines[1] == "  deepseek-v4-flash — running 60s, last read a.py (×3)", lines[1]
+    assert lines[1] == "deepseek-v4-flash — running 60s, last read a.py (×3)", lines[1]
     assert not any("gpt-5.6-luna" in l for l in lines[1:]), "a juror that reported is not working"
 
 
@@ -1720,7 +1734,7 @@ def test_a_torn_final_line_does_not_cost_the_display():
         working("opencode-go/qwen3.7-plus", "qwen3.7-plus — running 60s, last read a.py"))
     with open(path, "a") as fh:
         fh.write('{"t": "2026-09-21T12:01:0')
-    assert m.render(path).split("\n")[1] == "  qwen3.7-plus — running 60s, last read a.py"
+    assert m.render(path).split("\n")[1] == "qwen3.7-plus — running 60s, last read a.py"
 
 
 def test_a_runner_that_stopped_writing_says_so():
@@ -1746,6 +1760,65 @@ def test_a_kind_this_does_not_know_is_ignored():
     lines = m.render(path).split("\n")
     assert len(lines) == 2, lines
     assert "$0.17" not in m.render(path)
+
+
+def test_a_juror_that_never_reported_is_not_counted_as_reporting():
+    """`absent` and `timeout` settle a juror without a verdict. Counting them as reported made
+    a panel where all four died read `4 of 4 reported` — four verdicts claimed where none
+    landed, and the last thing the caller saw before the line vanished (LAB-86 review)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched", "pid": os.getpid()},
+        {"kind": "returned", "message": "luna returned in 55s", "model": "a"},
+        {"kind": "absent", "message": "NO REPORT from b", "model": "b"},
+        {"kind": "timeout", "message": "NO REPORT from c — killed at the 1801s timeout",
+         "model": "c"},
+        working("d", "d — running 60s, last read x.py"))
+    head = m.render(path).split("\n")[0]
+    assert head == "⚖ LAB-1 — 1 of 4 reported, 2 absent", head
+
+
+def test_a_second_artifacts_jurors_still_render():
+    """One progress file covers every artifact of a run, and the same four models review each.
+    Read as one panel, artifact 1's settled jurors counted against artifact 2 — every live
+    juror filtered out and the header frozen at `4 of 4`, which is what a finished panel looks
+    like, for up to the backstop (LAB-86 review)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "2 jurors dispatched", "artifact": "one",
+         "pid": os.getpid()},
+        {"kind": "returned", "message": "a returned in 30s", "model": "a", "artifact": "one"},
+        {"kind": "returned", "message": "b returned in 40s", "model": "b", "artifact": "one"},
+        {"kind": "dispatched", "message": "2 jurors dispatched", "artifact": "two",
+         "pid": os.getpid()},
+        working("a", "a — running 60s, last read x.py", artifact="two"),
+        working("b", "b — running 60s, last grep y", artifact="two"))
+    lines = m.render(path).split("\n")
+    assert lines[0] == "⚖ LAB-1 — 0 of 2 reported", lines[0]
+    assert len(lines) == 3, lines
+
+
+def test_a_run_whose_process_is_gone_shows_nothing():
+    """A SIGKILLed runner writes no `settled` — that is in a `finally`, which SIGKILL skips —
+    and nothing prunes `agents/out`, so its file stays newest in the directory. Asking the OS
+    about the pid settles it; mtime only guessed, and guessed for half an hour (LAB-86)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched", "pid": dead_pid()},
+        working("a", "a — running 60s, last read x.py"))
+    assert m.render(path) == "", m.render(path)
+
+
+def test_the_juror_line_survives_the_status_lines_own_trim():
+    """The status line trims every line before rendering it, so an indent written here is
+    dropped before anyone sees it. Asserting the emitted string hid that; this asserts what
+    reaches the screen (LAB-86 review)."""
+    m = load_statusline()
+    path = progress_file(
+        {"kind": "dispatched", "message": "4 jurors dispatched", "pid": os.getpid()},
+        working("a", "a — running 60s, last read x.py"))
+    shown = rendered(m.render(path))
+    assert shown == ["⚖ LAB-1 — 0 of 4 reported", "a — running 60s, last read x.py"], shown
 
 
 def test_the_display_never_fails_the_slot():

@@ -107,9 +107,22 @@ doing, and prints nothing. Two consequences:
   happened while LAB-86 was being built, and the ordering is the fix.
 - **The command is in `~/.claude/settings.json`, which `dotfiles` owns and Orca rewrites in
   place on upgrade.** So the display is not delivered by this repo alone, and an Orca upgrade
-  removes it silently — the panel runs exactly as before and nothing renders. The jury skill's
-  step 3 checks the slot at dispatch for that reason. Nothing here can test the forward, since
-  it lives in the other repo.
+  removes it silently — the panel runs exactly as before and nothing renders. `jury.py`'s
+  `check_display` reads the slot at dispatch and prints one line when it no longer names
+  `statusline.py`. It lives in the runner rather than the skill because the settings file is
+  ~40KB: read into a session, that check cost about 11k tokens a panel to almost always pass.
+  Nothing here can test the forward, since it lives in the other repo. That command is also
+  POSIX-only, dropping the Windows branches Orca's carried — deliberate, because `dotfiles` is
+  a macOS-only setup, and the thing to undo first if that changes.
+
+**The progress file carries state, not only events.** `dispatched` rows carry `pid`, and every
+row in `run_headless` carries `artifact`. Neither is for the runner; both exist because a
+display that reconstructs state from an event log guesses, and the guesses were wrong. One file
+covers every artifact of a run, so without `artifact` the renderer read artifact 1's settled
+jurors as artifact 2's state — a frozen `4 of 4` with no juror lines, indistinguishable from a
+finished panel. And liveness is a fact about a process: a SIGKILLed runner writes no `settled`,
+so mtime alone would have shown a dead panel as live for half an hour (LAB-86). Add a field
+rather than a rule when the runner already knows the answer.
 
 ## Working on the juror
 
