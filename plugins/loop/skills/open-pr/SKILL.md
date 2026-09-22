@@ -1,10 +1,10 @@
 ---
 name: open-pr
-description: Commit remaining changes, push, open a PR, and update the Linear issue status. Use when work on an issue is ready for review. Shipping only — review the diff with /review-changes first; this skill does not review.
+description: Commit remaining changes, push, open a PR, and update the Linear issue status. Use when work on an issue is ready for review. Shipping only — review the diff with /loop:review-changes first; this skill does not review.
 disable-model-invocation: true
 ---
 
-Open a PR for the current branch. This is the shipping path — it assumes the diff has already been reviewed with `/review-changes`. If it hasn't, run `/review-changes` first.
+Open a PR for the current branch. This is the shipping path — it assumes the diff has already been reviewed with `/loop:review-changes`. If it hasn't, run `/loop:review-changes` first.
 
 This opens a PR for the **current repo's** branch only — every step below reads the current working directory. If an issue's work spans multiple repos/branches (e.g. app code plus a skill change in the `agent-workflow` repo), run this once from each repo.
 

@@ -27,7 +27,7 @@ be reconstructed afterwards. The lines look like:
 
 ```
 glm-5.3-flash returned in 214s, $0.0535 — 1 of 4
-qwen3.7-plus — running 120s, last read claude/.claude/scripts/jury.py (×3)
+qwen3.7-plus — running 120s, last read plugins/loop/scripts/jury.py (×3)
 LAB-83.artifact: $0.1719 over 39 steps and 57 calls
 ```
 

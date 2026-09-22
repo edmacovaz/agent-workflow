@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Agree a plan for a Linear issue and record it on the issue before any code — the "no code yet" gate. Use after grooming an issue, before /start-work; runs read-only in the issue's worktree — no changes. Not for environment setup or verifying the worktree — that's /start-work.
+description: Agree a plan for a Linear issue and record it on the issue before any code — the "no code yet" gate. Use after grooming an issue, before /loop:start-work; runs read-only in the issue's worktree — no changes. Not for environment setup or verifying the worktree — that's /loop:start-work.
 ---
 
 Plan the work for a Linear issue before writing any code. The issue is the spec container — read it via the Linear MCP and record the agreed plan back onto it. Do **not** create in-repo `spec.md` / `plan.md` / `tasks.md` files.
@@ -39,7 +39,7 @@ Finish by moving the issue to the status that means *planned, not started* — `
 The description and the status are two acts, not one. A description can be rewritten; a status is a signal to everyone and everything watching the board. So it moves last, and only once the plan itself is on the issue.
 
 ### 5. Stop at planned
-This skill ends at a planned issue: the plan recorded on the issue, the status at planned. It writes no code — implementation is `/start-work`, which builds from the plan this skill records.
+This skill ends at a planned issue: the plan recorded on the issue, the status at planned. It writes no code — implementation is `/loop:start-work`, which builds from the plan this skill records.
 
 **The gate is not only about code.** Writing the plan to the issue and moving its status are outward-facing changes to shared state, so step 4 is itself gated: it needs agreement to *the plan*, which is not the same as agreement to the findings behind it. Reading "not code, therefore free" is how a proposal gets committed before it has been approved.
 

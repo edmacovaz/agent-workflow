@@ -72,11 +72,11 @@ Orca names the branch after the worktree (`edmacovaz/<name>`), so it carries the
 
 The flow, all inside that one worktree:
 
-- **`/plan`** — read-only against the code as it stands. No branch, no changes.
-- **`/start-work`** — confirms the worktree is for this issue, fetches and reports how far its base has drifted from `baseRef` (advancing it only by fast-forward merge, and only with a clean tree), binds the worktree to the issue, then runs the project's install + secrets setup (`node_modules` isn't shared between worktrees), and starts implementing the plan.
+- **`/loop:plan`** — read-only against the code as it stands. No branch, no changes.
+- **`/loop:start-work`** — confirms the worktree is for this issue, fetches and reports how far its base has drifted from `baseRef` (advancing it only by fast-forward merge, and only with a clean tree), binds the worktree to the issue, then runs the project's install + secrets setup (`node_modules` isn't shared between worktrees), and starts implementing the plan.
 
 Guardrails:
 - The agent works only in the worktree the session is anchored to; a global hook blocks edits to a *different* worktree of the same repo (see the worktree-anchoring memory). Anchor absolute Read/Edit paths to the worktree root.
 - If a session isn't in the intended worktree, switch into an existing one with `EnterWorktree` (`path: …`); still don't *create* one.
 - Don't touch an *unrelated* worktree (one that isn't for the issue at hand).
-- A repo overrides all of this in its AGENTS.md under `## How work happens here` — for example, declaring that it's worked on `main` in the main checkout. Where that policy and the session's actual placement disagree, `/start-work` stops and asks.
+- A repo overrides all of this in its AGENTS.md under `## How work happens here` — for example, declaring that it's worked on `main` in the main checkout. Where that policy and the session's actual placement disagree, `/loop:start-work` stops and asks.

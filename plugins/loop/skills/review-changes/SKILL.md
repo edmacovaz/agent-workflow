@@ -1,9 +1,9 @@
 ---
 name: review-changes
-description: Review the branch diff before shipping — judge it against the issue's intent, audit it for AGENTS.md conformance, and run the built-in /code-review. Use after coding and before /open-pr; safe to run in multiple passes and to fan out to subagents. Read-only — it reviews but does not commit, push, or open the PR (that's /open-pr).
+description: Review the branch diff before shipping — judge it against the issue's intent, audit it for AGENTS.md conformance, and run the built-in /code-review. Use after coding and before /loop:open-pr; safe to run in multiple passes and to fan out to subagents. Read-only — it reviews but does not commit, push, or open the PR (that's /loop:open-pr).
 ---
 
-Review the work on the current branch before it ships. This skill only reads and reports — it makes no commits, pushes, or status changes, so run it as many passes as you like (and it pairs well with subagents reviewing different angles in parallel). When the review is clean, hand off to `/open-pr`.
+Review the work on the current branch before it ships. This skill only reads and reports — it makes no commits, pushes, or status changes, so run it as many passes as you like (and it pairs well with subagents reviewing different angles in parallel). When the review is clean, hand off to `/loop:open-pr`.
 
 ## Current state
 - Branch: !`git branch --show-current`

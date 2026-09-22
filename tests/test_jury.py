@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Behaviour tests for jury.py.  Run: python3 claude/.claude/scripts/test_jury.py
+"""Behaviour tests for jury.py.  Run: python3 tests/test_jury.py
 
-By path, from the worktree root: `~/.claude/scripts/` resolves to the main checkout, so the
-habitual path runs the copy you are not editing and goes green over a broken change.
+By path, from the worktree root.  An installed plugin is a *version-stamped copy* under
+`~/.claude/plugins/cache/`, so testing the installed runner exercises the copy you are not
+editing and goes green over a broken change (LAB-80).
 
 No test framework, deliberately: this must run anywhere the jury does with nothing
 installed.  Every test here exists because a real run broke, and each names the
@@ -21,8 +22,13 @@ against run_headless/main instead.
 """
 import importlib.util, json, os, re, subprocess, sys, tempfile
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jury.py")
-STATUSLINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "statusline.py")
+# This suite spans the split LAB-80 made: `jury.py` ships inside the plugin, while
+# `statusline.py` stays in the stow package because `settings.json` must name it by a
+# literal path and no plugin component owns the status-line slot.
+SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      "..", "plugins", "loop", "scripts", "jury.py")
+STATUSLINE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "..", "claude", ".claude", "scripts", "statusline.py")
 
 
 def load():
@@ -1570,7 +1576,7 @@ def test_the_spend_line_names_jurors_not_calls():
 # 1.18.30 — not that opencode still behaves that way, which only a live probe can show.
 
 JUROR_MD = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                        "..", "..", "..", "opencode", ".config", "opencode", "agents", "juror.md")
+                        "..", "opencode", ".config", "opencode", "agents", "juror.md")
 
 # opencode 1.18.30's permission surface.  A key absent from the block is not thereby denied:
 # resolution starts from a built-in `"*": "allow"`, which is how `websearch` stayed open.
