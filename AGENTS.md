@@ -3,9 +3,10 @@
 ## What this repo is
 
 **The agent loop** — the jury runner, the juror agent, the plugins that run inside a juror's
-process, and the skills that carry the development lifecycle. It is delivered by GNU Stow (see
-`README.md` for packaging), so everything here is an ordinary commit and every change is
-revertible.
+process, and the skills that carry the development lifecycle. The Claude side ships as the
+`loop` plugin from a marketplace this repo hosts; the opencode side and two scripts are still
+delivered by GNU Stow (see `README.md`). Either way everything here is an ordinary commit and
+every change is revertible.
 
 It used to live in `dotfiles`, beside personal zsh, git and Zed configuration. Repos that consume
 the loop should not have to depend on that, which is why it moved (LAB-79). Machine configuration
@@ -71,7 +72,7 @@ sessions, including ones that would otherwise have loaded this file.
 | `plugins/loop/hooks/` | `worktree-anchor-guard.sh` (PreToolUse — blocks an edit aimed at a different worktree of the same repo) and `session-rules.sh` (SessionStart — emits the rules file as `additionalContext`). Both are wired in `hooks.json` inside the plugin, so neither is in `~/.claude/settings.json` any more. |
 | `claude/.claude/scripts/` | The two scripts that **cannot** live in the plugin, because configuration outside it names them by literal path: `inspect.sh`, named by `juror.md`'s bash allow patterns, which opencode matches as literal text; and `statusline.py`, named by `settings.json`'s `statusLine.command`, which `plugin.json` rejects as an unknown field. An installed plugin's path is version-stamped, so pointing either at it would break on every `plugin update`. |
 | `tests/` | `test_jury.py` and `test_no_retry.mjs`. Outside the plugin deliberately: the second tests the *opencode* plugin, and the first now spans both sides of the split above — `jury.py` inside the plugin, `statusline.py` outside it. |
-| `opencode/.config/opencode/` | `agents/juror.md`, `opencode.jsonc`, and `plugins/` — hooks that run inside a juror's own process, currently `no-retry.js` (LAB-71). |
+| `opencode/.config/opencode/` | `agents/juror.md`, `opencode.jsonc`, `plugins/` — hooks that run inside a juror's own process, currently `no-retry.js` (LAB-71) — and `skills/`, which holds symlinks to the two standards a juror judges form against, `plan` and `review-changes`. |
 | `agents/in`, `agents/out` | Jury packs, juror reports, and each run's `<run>.progress.jsonl`. Untracked, and created relative to the directory the runner is invoked from. Each gets a `.gitignore` of `*` written by `ensure_ignored`, so reports are uncommittable in a *fresh clone* rather than only on a machine whose global git config happens to ignore `agents/`. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. |
 
 ## Orchestration
@@ -112,8 +113,10 @@ doing, and prints nothing. Two consequences:
   a forward inside it would take Orca's telemetry down with it. That is not hypothetical — it
   happened while LAB-86 was being built, and the ordering is the fix.
 - **The command is in `~/.claude/settings.json`, which `dotfiles` owns and Orca rewrites in
-  place on upgrade.** So the display is not delivered by this repo alone, and an Orca upgrade
-  removes it silently — the panel runs exactly as before and nothing renders. `jury.py`'s
+  place** — on its own upgrade, and also when **Claude Code** updates: on 23 Sep 2026 Orca
+  reinstalled its stock status-line script 1m44s after Claude Code moved to 2.1.280. So the
+  display is not delivered by this repo alone, and either upgrade removes it silently — the
+  panel runs exactly as before and nothing renders. `jury.py`'s
   `check_display` reads the slot at dispatch and prints one line when it no longer names
   `statusline.py`. It lives in the runner rather than the skill because the settings file is
   ~40KB: read into a session, that check cost about 11k tokens a panel to almost always pass.
@@ -178,14 +181,19 @@ How the rules resolve, measured against opencode 1.18.30 rather than taken from 
 - **A trailing `*` matches the bare command too** — measured: `git branch *` permitted a bare
   `git branch`, so one entry covers both forms.
 
-A juror can therefore read the worktree, load a skill from it, run those verbs, and write its
-own report. What it cannot check is a claim about the *installed* copy of an agent or script:
-those resolve outside the worktree. **LAB-80 narrowed that further**, and the block has not been
-revisited for it — the installed skills are now a version-stamped copy under
-`~/.claude/plugins/cache/`, which the `read` block's `*/.claude/skills/*` entry does not match,
-so that entry reaches only the `sandbox` skill `dotfiles` contributes. Reviewing a plan or a
-diff needs the worktree and nothing else, so nothing is broken by it; it is dead weight rather
-than a gap. Widening is LAB-38's call; LAB-40 covers scoping skill access.
+A juror can therefore read the worktree, load a standard with the `skill` tool, run those
+verbs, and write its own report. What it cannot check is a claim about the *installed* copy of
+an agent or script: those resolve outside the worktree.
+
+**A juror's standards come from opencode's own skills directory, not Claude's.** opencode
+discovers skills in `~/.claude/skills/` and in `~/.config/opencode/skills/`, but never in the
+Claude plugin cache — measured with `opencode debug skill`. So once LAB-80 took the skills out of
+`~/.claude/skills/`, a juror would have lost `plan` and `review-changes` entirely, and every
+panel's form judgement with them. The opencode package now symlinks just those two into
+`~/.config/opencode/skills/`, which opencode prefers over `~/.claude/skills/` where both exist,
+and `external_directory` allows that path for a standard's `references/`. Only the standards
+are delivered, deliberately: a juror has no business loading the lifecycle skills it reviews
+against. Widening is LAB-38's call; LAB-40 covers scoping skill access.
 
 **Jurors are opencode processes, not Claude sessions**, so Claude's own sandbox and
 permission settings do not govern them. This config is all that shapes what they reach for —

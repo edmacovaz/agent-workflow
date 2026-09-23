@@ -1,7 +1,7 @@
 {
   "name": "loop",
   "version": "0.1.0",
-  "description": "Spec-driven development lifecycle — roadmap, plan, start-work, review-changes, open-pr, merge-deploy-check — plus the cross-vendor jury that reviews a plan or a diff, and the working conventions they all assume.",
+  "description": "Spec-driven development lifecycle — plan, start-work, review-changes, open-pr, merge-deploy-check — plus the cross-vendor jury that reviews a plan or a diff, and the working conventions they all assume.",
   "author": {
     "name": "Ed Macovaz",
     "email": "ed@edmacovaz.com"

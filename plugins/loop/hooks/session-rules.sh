@@ -2,14 +2,15 @@
 # Delivers the working conventions as SessionStart context, replacing the stow-delivered
 # ~/.claude/rules/agent-workflow.md that Claude Code used to load natively (LAB-80).
 #
-# Wired on `startup` and `compact`, never on `resume`. The hook fires on every `--continue`,
+# Wired on `startup`, `compact` and `clear`, never on `resume`. The hook fires on every `--continue`,
 # and the previous injection is still in the resumed conversation — measured — so a resume
 # entry would add another copy of this file per resume, growing with the session.
 #
 # `compact` is not optional. additionalContext lives in the conversation, which compaction
 # rewrites; measured twice, the rules survived only by being folded into the generated
 # summary. That is lossy and model-dependent, so re-injecting on the boundary is what makes
-# survival structural rather than lucky.
+# survival structural rather than lucky. `clear` starts a fresh conversation with nothing
+# carried over, so it needs the same re-injection (LAB-80 review).
 #
 # Fails open, like the worktree guard beside it: an unreadable file or a Python that will not
 # start emits `{}`, so a session begins without the conventions rather than not at all.

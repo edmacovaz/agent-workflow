@@ -15,7 +15,7 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 - **merge-deploy-check** — merge, deploy, and confirm it works in production (closes the Definition of done).
 
 ### How vs what
-- **Skills are the project-agnostic *how*** (process) and live here, user-global, alongside these conventions.
+- **Skills are the project-agnostic *how*** (process) and ship in the `loop` plugin alongside these conventions, reaching every repo that enables it.
 - **Project docs (AGENTS.md / CLAUDE.md) are the project-specific *what/context*** — stack, test strategy, architecture, scope.
 - A skill **points into AGENTS.md** for specifics rather than embedding them. If a skill names a stack, test command, or scope rule, that belongs in AGENTS.md instead.
 
@@ -76,7 +76,7 @@ The flow, all inside that one worktree:
 - **`/loop:start-work`** — confirms the worktree is for this issue, fetches and reports how far its base has drifted from `baseRef` (advancing it only by fast-forward merge, and only with a clean tree), binds the worktree to the issue, then runs the project's install + secrets setup (`node_modules` isn't shared between worktrees), and starts implementing the plan.
 
 Guardrails:
-- The agent works only in the worktree the session is anchored to; a global hook blocks edits to a *different* worktree of the same repo (see the worktree-anchoring memory). Anchor absolute Read/Edit paths to the worktree root.
+- The agent works only in the worktree the session is anchored to; the plugin's worktree-anchor guard blocks edits to a *different* worktree of the same repo (see the worktree-anchoring memory). Anchor absolute Read/Edit paths to the worktree root.
 - If a session isn't in the intended worktree, switch into an existing one with `EnterWorktree` (`path: …`); still don't *create* one.
 - Don't touch an *unrelated* worktree (one that isn't for the issue at hand).
 - A repo overrides all of this in its AGENTS.md under `## How work happens here` — for example, declaring that it's worked on `main` in the main checkout. Where that policy and the session's actual placement disagree, `/loop:start-work` stops and asks.

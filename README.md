@@ -33,7 +33,7 @@ opencode` installs there, reports success, and leaves `~` untouched (LAB-79).
 | Package | Tracks | Why not the plugin |
 |---------|--------|--------------------|
 | `claude` | `~/.claude/scripts/inspect.sh`, `~/.claude/scripts/statusline.py` | Configuration outside the plugin names both by literal path — `juror.md`'s bash allow patterns, which opencode matches as literal text, and `settings.json`'s `statusLine.command`, which `plugin.json` rejects as an unknown field. An installed plugin's path is version-stamped, so pointing either at it breaks on every `plugin update`. |
-| `opencode` | `~/.config/opencode/opencode.jsonc`, `agents/`, `plugins/` | opencode's plugin format carries hooks and custom tools only — it cannot carry an agent definition or config (LAB-78). |
+| `opencode` | `~/.config/opencode/opencode.jsonc`, `agents/`, `plugins/`, `skills/` | opencode's plugin format carries hooks and custom tools only — it cannot carry an agent definition or config (LAB-78). `skills/` symlinks the two standards a juror loads, `plan` and `review-changes`, because opencode never reads the Claude plugin cache. |
 
 `~/.claude/settings.json` and `~/.claude/CLAUDE.md` are **not** here — they are personal
 configuration and stay in [`dotfiles`](https://github.com/edmacovaz/dotfiles), which stows into
@@ -43,6 +43,31 @@ the plugin cache) is unmanaged, as is opencode's plugin runtime (`node_modules`,
 
 Secrets are never tracked.
 
+## Moving from the old stow-only install
+
+A machine that stowed the loop before it became a plugin has symlinks in `~/.claude/skills/`,
+`~/.claude/rules/` and `~/.claude/hooks/` pointing into `claude/.claude/`. Pulling this change
+deletes their targets, so **unstow before pulling** — stow needs the files present to know what
+to remove:
+
+```bash
+cd ~/Documents/Code/agent-workflow
+stow -D -t ~ claude
+git pull
+claude plugin marketplace add .
+claude plugin install loop@agent-workflow
+stow -t ~ claude opencode
+```
+
+Then, in the same sitting, remove the worktree-guard `PreToolUse` block from
+`~/.claude/settings.json` in `dotfiles`: the plugin carries that hook now, and the old entry
+names a file that no longer exists. Restart Claude Code afterwards — skills are namespaced
+(`/loop:plan`) from the next session.
+
+Pull first and the links dangle: no lifecycle skills, no conventions, and a hook that fails on
+every edit until the plugin is installed. Install first and everything loads twice — the rules
+from both routes, and each skill as both `/plan` and `/loop:plan`.
+
 ## Updating
 
 An installed plugin is a **version-stamped hard copy**, not a symlink, so pulling is not enough:
@@ -50,7 +75,7 @@ An installed plugin is a **version-stamped hard copy**, not a symlink, so pullin
 ```bash
 git -C ~/Documents/Code/agent-workflow pull
 claude plugin marketplace update agent-workflow && claude plugin update loop
-stow -t ~ claude opencode   # only if a stow-side file was added
+stow -t ~ claude opencode   # only if a stow-side file was added or removed
 ```
 
 ## Working on the loop

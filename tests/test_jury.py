@@ -852,7 +852,7 @@ def test_the_working_line_names_the_file_not_just_its_directory():
     m = load()
     root = os.getcwd()
     ev = json.dumps({"part": {"type": "tool", "tool": "read", "state": {"input": {
-        "filePath": os.path.join(root, "claude/.claude/scripts/test_jury.py")}}}})
+        "filePath": os.path.join(root, "tests/test_jury.py")}}}})
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "e.jsonl")
         open(path, "w").write(ev)
@@ -1652,7 +1652,7 @@ def test_the_juror_shell_reaches_only_the_inspect_verbs():
     where every juror is refused its first move is half the panel producing nothing."""
     _, bash = juror_permissions()
     for command in ("git status", "git log --oneline", "ls agents/out",
-                    "python3 claude/.claude/scripts/test_jury.py",
+                    "python3 tests/test_jury.py",
                     "~/.claude/scripts/inspect.sh status && rm -rf /",
                     "~/.claude/scripts/inspect.sh log | head -5",
                     "~/.claude/scripts/inspect.sh nonesuch",
