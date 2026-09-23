@@ -53,10 +53,10 @@ Intent is what the work *should deliver*. A plan already on the issue is not int
 ```
 Monitor(command: "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jury.py --artifact <a> --intent <i> \
   --standard <s> --run-id <run>",
-        description: "<ISSUE> jury panel", persistent: true)
+        description: "<ISSUE> jury panel", persistent: true, timeout_ms: 3600000)
 ```
 
-**`persistent: true`, not a `timeout_ms`.** The default is five minutes and the maximum is sixty, while the runner's own backstop is thirty minutes *per artifact* — so a two-artifact panel can outlive any value you are allowed to pass. Stopping the runner is worse than it sounds. `jury.py` catches SIGTERM and turns it into an exit, so a `TaskStop` still kills the jurors and writes `<run>.jury-result.json` — but nothing in-process survives a SIGKILL, and a runner killed that way leaves `opencode run` children spending tokens with every verdict on disk orphaned. Prefer `TaskStop` when the panel settles; do not `kill -9` a panel. Never background the run with a separate watch on the progress file: the landings would go to a file nobody is reading, and the caller would learn nothing until the run ended.
+**Pass both `persistent: true` and `timeout_ms: 3600000`, because Monitor's contract changes between Claude Code versions.** Where Monitor takes `persistent`, the watch runs until the panel settles. Where it does not, as on 2.1.280, `persistent` is silently ignored and the default five-minute expiry kills the runner mid-panel, while a `timeout_ms` above the cap is clamped to thirty minutes rather than rejected (LAB-80). Read the `Monitor started` line: if it names an expiry, the watch is bounded, and the runner's own backstop is thirty minutes *per artifact*, so a two-artifact panel can outlive it. Background `Bash` has no such ceiling (LAB-75) but reports only at exit, so use it for a panel you expect to run longer, and say that you did. Stopping the runner is worse than it sounds. `jury.py` catches SIGTERM and turns it into an exit, so a `TaskStop` still kills the jurors and writes `<run>.jury-result.json` — but nothing in-process survives a SIGKILL, and a runner killed that way leaves `opencode run` children spending tokens with every verdict on disk orphaned. Prefer `TaskStop` when the panel settles; do not `kill -9` a panel. Never background the run with a separate watch on the progress file: the landings would go to a file nobody is reading, and the caller would learn nothing until the run ended.
 
 Each juror is a bounded `opencode run` that exits when it is done.
 
