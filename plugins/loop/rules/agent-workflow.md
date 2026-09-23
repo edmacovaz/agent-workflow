@@ -6,7 +6,7 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 
 **roadmap → plan → start-work → (code) → review → open-pr → merge-deploy-check**
 
-- **roadmap** — review and groom the backlog; shape and prioritise issues (builds on `write-issue`).
+- **roadmap** — review and groom the backlog; shape and prioritise issues (builds on `write-issue`). **Not yet built** — there is no `roadmap` skill; grooming is done by hand with `write-issue` until LAB-35 lands.
 - **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet. Read-only — no branch, no changes.
 - **start-work** — verify the worktree Orca created is for this issue, bring its base up to date, set it up (deps + secrets), orient, mark In Progress, and start implementing the plan. Cuts nothing.
 - **code** — no skill of its own; the agreed plan + the conventions below (comments, commit messages) + the project's AGENTS.md (principles, stack, test strategy) + the built-in `/verify` and `/run` carry it.

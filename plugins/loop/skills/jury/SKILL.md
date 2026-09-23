@@ -48,15 +48,15 @@ Intent is what the work *should deliver*. A plan already on the issue is not int
 
 `Monitor` is deferred — fetch it with `ToolSearch` first. Resolve the run id **before** dispatching: run `date +%Y%m%d-%H%M%S-$$` and prefix `<ISSUE>-`. Use that resolved literal as `<run>` in the command and every path below. Never pass `$RUN`, and never read the id back after dispatching — `jury.py` returns only once the panel has settled.
 
-**Run the panel as the Monitor command**, so every line it prints becomes an event in the conversation as it happens:
+**Check your Monitor tool first: does it take a `persistent` parameter?** If it does, run the panel as the Monitor command, so every landing reaches the conversation as it happens:
 
 ```
 Monitor(command: "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/jury.py --artifact <a> --intent <i> \
   --standard <s> --run-id <run>",
-        description: "<ISSUE> jury panel", persistent: true, timeout_ms: 3600000)
+        description: "<ISSUE> jury panel", persistent: true)
 ```
 
-**Pass both `persistent: true` and `timeout_ms: 3600000`, because Monitor's contract changes between Claude Code versions.** Where Monitor takes `persistent`, the watch runs until the panel settles. Where it does not, as on 2.1.280, `persistent` is silently ignored and the default five-minute expiry kills the runner mid-panel, while a `timeout_ms` above the cap is clamped to thirty minutes rather than rejected (LAB-80). Read the `Monitor started` line: if it names an expiry, the watch is bounded, and the runner's own backstop is thirty minutes *per artifact*, so a two-artifact panel can outlive it. Background `Bash` has no such ceiling (LAB-75) but reports only at exit, so use it for a panel you expect to run longer, and say that you did. Stopping the runner is worse than it sounds. `jury.py` catches SIGTERM and turns it into an exit, so a `TaskStop` still kills the jurors and writes `<run>.jury-result.json` — but nothing in-process survives a SIGKILL, and a runner killed that way leaves `opencode run` children spending tokens with every verdict on disk orphaned. Prefer `TaskStop` when the panel settles; do not `kill -9` a panel. Never background the run with a separate watch on the progress file: the landings would go to a file nobody is reading, and the caller would learn nothing until the run ended.
+**If it does not, run the panel as a background `Bash` command instead** (`run_in_background: true`, same command line). A Monitor without `persistent` ignores the flag silently and expires the watch — five minutes by default, thirty at most — and an expiring watch SIGTERMs the runner. Thirty minutes is also the runner's own per-juror backstop, so a single slow juror takes the *whole* panel down with it, where the backstop would have cut off only that juror: on 2.1.280 a panel that three jurors had finished was killed at 1799s this way (LAB-80). Background `Bash` has no ceiling (LAB-75) and reports once, at exit; the status line still shows the panel while it runs, so nothing is lost but the per-landing lines. Say which route you took. Stopping the runner is worse than it sounds. `jury.py` catches SIGTERM and turns it into an exit, so a `TaskStop` still kills the jurors and writes `<run>.jury-result.json` — but nothing in-process survives a SIGKILL, and a runner killed that way leaves `opencode run` children spending tokens with every verdict on disk orphaned. Prefer `TaskStop` when the panel settles; do not `kill -9` a panel. Never pair a background run with a separate watch on the progress file: a `tail` under Monitor turns every heartbeat back into a turn, which is what LAB-75 removed.
 
 Each juror is a bounded `opencode run` that exits when it is done.
 
@@ -73,7 +73,7 @@ Then say what you started — `4 jurors dispatched`. **Offer no time.**
 
 `agents/out/<run>.progress.jsonl` holds every line, landings and heartbeats alike, as a record — for a stream that was missed or a run that crashed. Follow `references/dispatch-mechanics.md` for the line format and for which `agents/out/<run>.*` files are juror reports.
 
-`<run>.jury-result.json` means the run has settled; read it and go to step 4. It is written even when the run crashes — but if Monitor exits and it never appears, the run died before it could write one. Report that; do not keep waiting.
+`<run>.jury-result.json` means the run has settled; read it and go to step 4. It is written even when the run crashes — but if the Monitor or background task exits and it never appears, the run died before it could write one. Report that; do not keep waiting.
 
 ## 4. Report back
 
