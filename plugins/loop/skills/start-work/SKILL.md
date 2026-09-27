@@ -1,12 +1,12 @@
 ---
 name: start-work
-description: Verify the worktree Orca already created for a Linear issue, bring its base up to date, prepare it, and start implementing the agreed plan. Use after /plan, when you're ready to start changes. Not for planning — that's /plan. Never creates worktrees, never cuts or renames a branch.
+description: Verify the worktree Orca already created for a Linear issue, bring its base up to date, prepare it, and start implementing the agreed plan. Use after /loop:plan, when you're ready to start changes. Not for planning — that's /loop:plan. Never creates worktrees, never cuts or renames a branch.
 disable-model-invocation: true
 ---
 
 Start work on Linear issue: $ARGUMENTS
 
-Run this after `/plan` has agreed a plan on the issue. `/plan` ran read-only; `start-work` confirms where you are, brings the base up to date, prepares the environment, and starts implementing the plan.
+Run this after `/loop:plan` has agreed a plan on the issue. `/loop:plan` ran read-only; `start-work` confirms where you are, brings the base up to date, prepares the environment, and starts implementing the plan.
 
 **Orca owns placement.** The worktree and its branch already exist — Orca created them. This skill verifies and prepares what is there. It never runs `orca worktree create`, never cuts a branch, and never renames Orca's branch.
 
@@ -22,9 +22,9 @@ Run this after `/plan` has agreed a plan on the issue. `/plan` ran read-only; `s
 A step may not cite another step as its condition — the reduced path below skips steps, and a step citing a skipped one can never run. Each step states its own condition instead. The section that defines the reduced path names steps freely; it cannot say which it skips otherwise.
 
 ### 1. Read the issue
-Fetch the issue by identifier (from $ARGUMENTS, or ask) via the Linear MCP. Take its title, description, and current status. The plan agreed in `/plan` is on the description — read it; it is what you are about to build.
+Fetch the issue by identifier (from $ARGUMENTS, or ask) via the Linear MCP. Take its title, description, and current status. The plan agreed in `/loop:plan` is on the description — read it; it is what you are about to build.
 
-**Where the description carries no plan, stop and say so** — run `/plan` first. This skill builds from a plan it did not write; without one there is nothing to build and nothing to judge the work against. Stopping here leaves git untouched and the issue's status where it was.
+**Where the description carries no plan, stop and say so** — run `/loop:plan` first. This skill builds from a plan it did not write; without one there is nothing to build and nothing to judge the work against. Stopping here leaves git untouched and the issue's status where it was.
 
 ### 2. Establish placement
 Orca is the authority. From the record above, take `path`, `branch`, `baseRef`, `displayName`, `isMainWorktree`, and `linkedLinearIssue`.
@@ -59,7 +59,7 @@ git status --porcelain
 git merge --ff-only <base>
 ```
 
-**Always report the drift** — how far behind `<base>` this branch is. `/plan` read the code as it stood; the branch was cut whenever Orca created it, which may be much earlier.
+**Always report the drift** — how far behind `<base>` this branch is. `/loop:plan` read the code as it stood; the branch was cut whenever Orca created it, which may be much earlier.
 
 **Two separate guards, each doing its own job.** `--ff-only` refuses where the branch carries commits of its own, so the advance can never rewrite history or leave a merge commit. It does **not** protect the working tree: with uncommitted changes to files the incoming commits don't touch, a fast-forward succeeds and moves `HEAD` underneath them. So `git status --porcelain` must come back empty before the merge runs — that is what refuses on a dirty tree.
 
@@ -80,7 +80,7 @@ Run the install **and env/secrets** steps the project's AGENTS.md specifies (e.g
 In a worktree this is required rather than optional: `node_modules` and secrets setup are not shared with the main checkout. In the main checkout, run whatever AGENTS.md asks for and expect most of it to be in place already.
 
 ### 8. Get your bearings
-A quick lay of the land, not deep analysis: skim AGENTS.md / README and locate the area the issue touches. The read-before-forming-a-view research already happened in `/plan` — don't re-do it here.
+A quick lay of the land, not deep analysis: skim AGENTS.md / README and locate the area the issue touches. The read-before-forming-a-view research already happened in `/loop:plan` — don't re-do it here.
 
 ### 9. Mark the issue In Progress
 Move the issue to its started state via the Linear MCP (skip where it is already there).

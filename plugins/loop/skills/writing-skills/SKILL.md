@@ -32,4 +32,4 @@ Leave the skill model-invocable by default so it triggers from the description. 
 Honour the working conventions in `~/.claude/CLAUDE.md`, chiefly the how/what boundary and the Linear issue as spec container. Skill-authoring specifics on top of those:
 
 - **Pre-fill live facts.** Open a skill that acts on live git/issue state with a `## Current state` section that inlines the relevant shell output. See `references/best-practices.md` for the inline-command syntax, a worked example, and the load-time execution trap that comes with it.
-- Skills live at `claude/.claude/skills/<name>/SKILL.md`, ship via stow, and take a gerund, verb-first name.
+- Skills live at `plugins/loop/skills/<name>/SKILL.md`, ship inside the `loop` plugin, and take a gerund, verb-first name. They are invoked namespaced, as `/loop:<name>` (LAB-80).

@@ -27,7 +27,8 @@ permission:
     "*": deny
     # The `skill` tool returns SKILL.md and absolute paths to its `references/` and nothing
     # more, so judging form against a standard means reading outside the worktree (LAB-56).
-    "*/.claude/skills/*": allow
+    # Standards resolve from opencode's own skills dir since LAB-80 took them out of ~/.claude.
+    "*/.config/opencode/skills/*": allow
   bash:
     # Fixed verbs, matched exactly. opencode matches a pattern against the whole command text,
     # redirect included, and never path-checks the redirect target — so any pattern ending in

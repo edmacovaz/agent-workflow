@@ -1,10 +1,10 @@
-// Tests for the juror's no-retry plugin: `node claude/.claude/scripts/test_no_retry.mjs`,
+// Tests for the juror's no-retry plugin: `node tests/test_no_retry.mjs`,
 // by path from the worktree root. Driven through the hooks because no panel can reach the
 // blocking path — asked to repeat a refused call twelve times, a juror made four and stopped.
 
 import { readFileSync } from "node:fs"
 
-const PLUGIN = new URL("../../../opencode/.config/opencode/plugins/no-retry.js", import.meta.url)
+const PLUGIN = new URL("../opencode/.config/opencode/plugins/no-retry.js", import.meta.url)
 // Imported as a data URL, which is always a module: importing the `.js` directly would need a
 // `package.json` declaring `"type": "module"`, and this repo has neither a package.json nor a
 // lockfile to add one to (LAB-71 review).

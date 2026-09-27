@@ -4,7 +4,7 @@ description: Merge an approved PR, deploy it, and verify it works in production 
 disable-model-invocation: true
 ---
 
-Take an approved PR through to verified-in-production. The diff has already been reviewed (`/review-changes`) and the PR opened (`/open-pr`); this is where merge happens — and where "done = working in production" is actually settled, not assumed at merge.
+Take an approved PR through to verified-in-production. The diff has already been reviewed (`/loop:review-changes`) and the PR opened (`/loop:open-pr`); this is where merge happens — and where "done = working in production" is actually settled, not assumed at merge.
 
 ## Current state
 - Branch: !`git branch --show-current`
@@ -18,10 +18,10 @@ Take an approved PR through to verified-in-production. The diff has already been
 Derive the issue identifier from the branch name — the suffix after the last `-` (e.g. `merge-deploy-check-ste-171` → `STE-171`). Fetch the issue from Linear for its title, description, and `## Plan`. Locate the open PR for the branch (see Current state).
 
 ### 2. Confirm it's ready to merge
-Check the PR is approved and CI is green. If it isn't approved, or review hasn't happened, stop and point the user back to `/review-changes` and `/open-pr` — don't merge unreviewed or unapproved work.
+Check the PR is approved and CI is green. If it isn't approved, or review hasn't happened, stop and point the user back to `/loop:review-changes` and `/loop:open-pr` — don't merge unreviewed or unapproved work.
 
 ### 3. Record the production cutover plan on the issue
-Before merging, write (or confirm) a `## Production cutover` section on the Linear issue — the canonical, current home for it, the same way `/plan` records `## Plan`. `/review-changes` *surfaces* this dev→prod delta read-only; here it becomes the recorded plan you'll execute. Cover whatever applies:
+Before merging, write (or confirm) a `## Production cutover` section on the Linear issue — the canonical, current home for it, the same way `/loop:plan` records `## Plan`. `/loop:review-changes` *surfaces* this dev→prod delta read-only; here it becomes the recorded plan you'll execute. Cover whatever applies:
 - migrations + their order relative to the deploy; destructive/data-loss steps + the backup story
 - prod-only config/secrets/infra to provision (mirroring dev)
 - breaking changes to clients already in the field
@@ -47,4 +47,4 @@ The squash-merge already deleted the remote branch (`--delete-branch`, step 4). 
 ### 8. Catalogue follow-ups
 Now that the work is verified in production, capture what taking it there surfaced:
 - **Docs/stack drift** — anything that should be corrected in the project's AGENTS.md, `~/.claude/CLAUDE.md`, or the techstack (deployment notes, stack, conventions that the cutover proved wrong or incomplete). Fix it now or file it.
-- **Other follow-ups** — any separate work the change turned up. File each as a Linear issue via `/write-issue`; don't fold unrelated follow-ups back into this one.
+- **Other follow-ups** — any separate work the change turned up. File each as a Linear issue via `/loop:write-issue`; don't fold unrelated follow-ups back into this one.

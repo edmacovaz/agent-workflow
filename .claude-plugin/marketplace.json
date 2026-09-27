@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "agent-workflow",
+  "description": "The agent loop: the skills that carry the spec-driven development lifecycle, the jury runner, and the hooks they depend on.",
+  "owner": {
+    "name": "Ed Macovaz",
+    "email": "ed@edmacovaz.com"
+  },
+  "plugins": [
+    {
+      "name": "loop",
+      "description": "Spec-driven development lifecycle — plan, start-work, review-changes, open-pr, merge-deploy-check — plus the cross-vendor jury that reviews a plan or a diff, and the working conventions they all assume.",
+      "source": "./plugins/loop",
+      "category": "workflow"
+    }
+  ]
+}
