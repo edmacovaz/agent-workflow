@@ -19,13 +19,17 @@ part of the loop.
 `start-work` applies that default.
 
 **Nothing here is live until it is merged, pushed and installed.** The Claude side ships as the
-`loop` plugin (LAB-80), and an installed plugin is a **version-stamped hard copy** under
-`~/.claude/plugins/cache/agent-workflow/loop/<version>/` — not a symlink. Editing a file in a
-worktree changes nothing any session loads, and neither does merging it, until:
+`loop` plugin (LAB-80), and an installed plugin is a **hard copy** under
+`~/.claude/plugins/cache/agent-workflow/loop/`, at a path that changes on every update — not a
+symlink. Editing a file in a worktree changes nothing any session loads, and neither does merging
+it, until:
 
 ```
 claude plugin marketplace update agent-workflow && claude plugin update loop
 ```
+
+The plugin has no versioned releases: `plugin.json` carries no `version`, so an installed copy
+updates on the git SHA, and a change needs no version bump.
 
 | What | Delivered by | Live when |
 | --- | --- | --- |
@@ -70,7 +74,7 @@ sessions, including ones that would otherwise have loaded this file.
 | `.claude-plugin/marketplace.json` | Makes this repo a marketplace. One plugin, `loop`, sourced from `./plugins/loop`. |
 | `plugins/loop/` | The plugin: `skills/`, `hooks/`, `scripts/jury.py`, and `rules/agent-workflow.md`. `rules/` is **not** a recognised component directory — it is inert to auto-discovery and exists only as the `SessionStart` hook's payload. |
 | `plugins/loop/hooks/` | `worktree-anchor-guard.sh` (PreToolUse — blocks an edit aimed at a different worktree of the same repo) and `session-rules.sh` (SessionStart — emits the rules file as `additionalContext`). Both are wired in `hooks.json` inside the plugin, so neither is in `~/.claude/settings.json` any more. |
-| `claude/.claude/scripts/` | The two scripts that **cannot** live in the plugin, because configuration outside it names them by literal path: `inspect.sh`, named by `juror.md`'s bash allow patterns, which opencode matches as literal text; and `statusline.py`, named by `settings.json`'s `statusLine.command`, which `plugin.json` rejects as an unknown field. An installed plugin's path is version-stamped, so pointing either at it would break on every `plugin update`. |
+| `claude/.claude/scripts/` | The two scripts that **cannot** live in the plugin, because configuration outside it names them by literal path: `inspect.sh`, named by `juror.md`'s bash allow patterns, which opencode matches as literal text; and `statusline.py`, named by `settings.json`'s `statusLine.command`, which `plugin.json` rejects as an unknown field. An installed plugin sits at a path that changes on every update, so pointing either at it would break on every `plugin update`. |
 | `tests/` | `test_jury.py` and `test_no_retry.mjs`. Outside the plugin deliberately: the second tests the *opencode* plugin, and the first now spans both sides of the split above — `jury.py` inside the plugin, `statusline.py` outside it. |
 | `opencode/.config/opencode/` | `agents/juror.md`, `opencode.jsonc`, `plugins/` — hooks that run inside a juror's own process, currently `no-retry.js` (LAB-71) — and `skills/`, which holds symlinks to the two standards a juror judges form against, `plan` and `review-changes`. |
 | `agents/in`, `agents/out` | Jury packs, juror reports, and each run's `<run>.progress.jsonl`. Untracked, and created relative to the directory the runner is invoked from. Each gets a `.gitignore` of `*` written by `ensure_ignored`, so reports are uncommittable in a *fresh clone* rather than only on a machine whose global git config happens to ignore `agents/`. Juror event streams are deliberately **not** here — they go to `~/.cache/jury/<run>/`, because a juror can read anything in the worktree and would otherwise read its co-jurors' reasoning as it forms. |
@@ -253,6 +257,10 @@ what you are editing.
 **The validator is a check, not a formality.** `--strict` fails on a missing author and on any
 field Claude Code would silently ignore at load time — which is how `statusLine` was found not
 to be a plugin component at all.
+
+It exits non-zero on exactly one known warning, `version: No version specified`, which is
+deliberate — the plugin updates on the git SHA (LAB-105). Read the output: any *other* warning
+is a real failure.
 
 No test framework, deliberately: it must run anywhere the jury does, with nothing installed.
 Every test exists because a real run broke, and names the iteration it came from — so a
