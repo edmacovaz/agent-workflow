@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "loop",
-      "description": "Spec-driven development lifecycle — plan, start-work, review-changes, open-pr, merge-deploy-check — plus the cross-vendor jury that reviews a plan or a diff, and the working conventions they all assume.",
+      "description": "Spec-driven development lifecycle — plan, start-work, review-changes, open-pr — plus the cross-vendor jury that reviews a plan or a diff, and the working conventions they all assume.",
       "source": "./plugins/loop",
       "category": "workflow"
     }

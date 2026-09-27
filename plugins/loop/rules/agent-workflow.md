@@ -4,7 +4,7 @@
 
 Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 
-**roadmap → plan → start-work → (code) → review → open-pr → merge-deploy-check**
+**roadmap → plan → start-work → (code) → review → open-pr → merge, deploy, check**
 
 - **roadmap** — review and groom the backlog; shape and prioritise issues (builds on `write-issue`). **Not yet built** — there is no `roadmap` skill; grooming is done by hand with `write-issue` until LAB-35 lands.
 - **plan** — turn the issue into an agreed plan recorded *on the issue*; no code yet. Read-only — no branch, no changes.
@@ -12,7 +12,7 @@ Work moves through a spec-driven lifecycle, carried by project-agnostic skills:
 - **code** — no skill of its own; the agreed plan + the conventions below (comments, commit messages) + the project's AGENTS.md (principles, stack, test strategy) + the built-in `/verify` and `/run` carry it.
 - **review** — review the diff before shipping (the `review-changes` skill): judge it against the issue's intent, audit AGENTS.md conformance, and wrap the built-in `/code-review` / `/simplify`. Non-side-effecting, so run it in multiple passes.
 - **open-pr** — commit, push, open the PR, set the issue to In Review.
-- **merge-deploy-check** — merge, deploy, and confirm it works in production (closes the Definition of done).
+- **merge, deploy, check** — merge, deploy, and confirm it works in production (closes the Definition of done). **Manual — no skill.** The project's AGENTS.md says how it deploys and what checking production means; don't propose a skill for this step.
 
 ### How vs what
 - **Skills are the project-agnostic *how*** (process) and ship in the `loop` plugin alongside these conventions, reaching every repo that enables it.

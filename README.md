@@ -37,7 +37,7 @@ opencode` installs there, reports success, and leaves `~` untouched (LAB-79).
 
 | Package | Tracks | Why not the plugin |
 |---------|--------|--------------------|
-| `claude` | `~/.claude/scripts/inspect.sh`, `~/.claude/scripts/statusline.py` | Configuration outside the plugin names both by literal path — `juror.md`'s bash allow patterns, which opencode matches as literal text, and `settings.json`'s `statusLine.command`, which `plugin.json` rejects as an unknown field. An installed plugin's path is version-stamped, so pointing either at it breaks on every `plugin update`. |
+| `claude` | `~/.claude/scripts/inspect.sh`, `~/.claude/scripts/statusline.py` | Configuration outside the plugin names both by literal path — `juror.md`'s bash allow patterns, which opencode matches as literal text, and `settings.json`'s `statusLine.command`, which `plugin.json` rejects as an unknown field. An installed plugin sits at a path that changes on every update, so pointing either at it breaks on every `plugin update`. |
 | `opencode` | `~/.config/opencode/opencode.jsonc`, `agents/`, `plugins/`, `skills/` | opencode's plugin format carries hooks and custom tools only — it cannot carry an agent definition or config (LAB-78). `skills/` symlinks the two standards a juror loads, `plan` and `review-changes`, because opencode never reads the Claude plugin cache. |
 
 `~/.claude/settings.json` and `~/.claude/CLAUDE.md` are **not** here — they are personal
@@ -75,8 +75,8 @@ from both routes, and each skill as both `/plan` and `/loop:plan`.
 
 ## Updating
 
-An installed plugin is a **version-stamped hard copy** fetched from GitHub, so it updates from
-what is pushed to `main`, not from your checkout:
+An installed plugin is a **hard copy** fetched from GitHub, at a path that changes on every
+update, so it updates from what is pushed to `main`, not from your checkout:
 
 ```bash
 claude plugin marketplace update agent-workflow && claude plugin update loop

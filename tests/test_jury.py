@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Behaviour tests for jury.py.  Run: python3 tests/test_jury.py
 
-By path, from the worktree root.  An installed plugin is a *version-stamped copy* under
-`~/.claude/plugins/cache/`, so testing the installed runner exercises the copy you are not
-editing and goes green over a broken change (LAB-80).
+By path, from the worktree root.  An installed plugin is a copy under `~/.claude/plugins/cache/`
+at a path that changes on every update, so testing the installed runner exercises the copy you
+are not editing and goes green over a broken change (LAB-80).
 
 No test framework, deliberately: this must run anywhere the jury does with nothing
 installed.  Every test here exists because a real run broke, and each names the
