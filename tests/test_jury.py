@@ -982,6 +982,16 @@ def test_a_brace_in_a_path_never_aborts_the_panel():
     assert specs and "a{weird}.md" in specs[0], specs
 
 
+def test_the_spec_opens_on_the_report_file():
+    """qwen gave well-formed verdicts as its final message instead of a file, while the path came
+    last and unemphasised (LAB-92)."""
+    m = load()
+    spec = m.SPEC.format(artifact="a.md", intent="i.md", standard="plan",
+                         report="agents/out/R.a.m.json")
+    first = spec.split(". ")[0]
+    assert "agents/out/R.a.m.json" in first and "write tool" in first, spec
+
+
 def test_a_failed_launch_leaks_no_handle():
     """Both files are opened before the process starts, so a failure between them left the
     first open and unreferenced (LAB-65 properties pass)."""
