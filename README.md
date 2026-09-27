@@ -14,7 +14,7 @@ Project context for agents working here is in `AGENTS.md`.
 git clone git@github.com:edmacovaz/agent-workflow.git ~/Documents/Code/agent-workflow
 cd ~/Documents/Code/agent-workflow
 
-claude plugin marketplace add .
+claude plugin marketplace add edmacovaz/agent-workflow
 claude plugin install loop@agent-workflow
 
 stow -t ~ claude opencode
@@ -22,6 +22,11 @@ stow -t ~ claude opencode
 
 The plugin brings the skills (invoked namespaced — `/loop:plan`, `/loop:review-changes`), the
 worktree-anchor guard, the working conventions, and `jury.py`.
+
+**The marketplace is the GitHub repo, not the checkout.** A directory source is a path on one
+machine, so no cloud session can follow it, and a repo enabling the loop names the GitHub source
+— two sources under one marketplace name would compete. Cloning it needs the same GitHub
+credential you cloned this repo with.
 
 **`-t ~` is required for stow, and its absence fails silently.** Stow's default target is the
 *parent of the stow directory* — which is `~` only for a repo cloned directly into `~`. From
@@ -54,7 +59,7 @@ to remove:
 cd ~/Documents/Code/agent-workflow
 stow -D -t ~ claude
 git pull
-claude plugin marketplace add .
+claude plugin marketplace add edmacovaz/agent-workflow
 claude plugin install loop@agent-workflow
 stow -t ~ claude opencode
 ```
@@ -70,12 +75,13 @@ from both routes, and each skill as both `/plan` and `/loop:plan`.
 
 ## Updating
 
-An installed plugin is a **version-stamped hard copy**, not a symlink, so pulling is not enough:
+An installed plugin is a **version-stamped hard copy** fetched from GitHub, so it updates from
+what is pushed to `main`, not from your checkout:
 
 ```bash
-git -C ~/Documents/Code/agent-workflow pull
 claude plugin marketplace update agent-workflow && claude plugin update loop
-stow -t ~ claude opencode   # only if a stow-side file was added or removed
+git -C ~/Documents/Code/agent-workflow pull   # the stow side still follows the checkout
+stow -t ~ claude opencode                      # only if a stow-side file was added or removed
 ```
 
 ## Working on the loop
