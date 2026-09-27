@@ -106,11 +106,14 @@ PANEL = ["opencode-go/gpt-5.6-luna", "opencode-go/deepseek-v4-flash",
          "opencode-go/qwen3.7-plus", "opencode-go/glm-5.3-flash"]
 
 
-SPEC = ("Review the artifact at {artifact} against the intent at {intent}. Both are inside this "
-        "worktree; read them, and read any repository files needed to check the artifact's claims. "
-        "Judge fit against the intent, and form against the `{standard}` standard — load it with the "
-        "skill tool and judge against what it actually says. Label every finding with its dimension. "
-        "Write your findings JSON to {report}")
+# Leads with the deliverable: qwen gave well-formed verdicts as its final message instead of a
+# file, while the path came last and unemphasised (LAB-92).
+SPEC = ("Your review is one file, {report}: create it with the write tool, holding only the "
+        "findings JSON. Review the artifact at {artifact} against the intent at {intent}. Both are "
+        "inside this worktree; read them, and read any repository files needed to check the "
+        "artifact's claims. Judge fit against the intent, and form against the `{standard}` "
+        "standard — load it with the skill tool and judge against what it actually says. Label "
+        "every finding with its dimension.")
 
 
 # A backstop, not a stop rule. Thirty minutes because 15-60 is ordinary for real review
