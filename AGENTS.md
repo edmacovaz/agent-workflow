@@ -31,7 +31,7 @@ claude plugin marketplace update agent-workflow && claude plugin update loop
 | --- | --- | --- |
 | `plugins/loop/` — skills, hooks, `jury.py`, the rules file | the `agent-workflow` marketplace | pushed **and** `plugin update` has run |
 | `claude/.claude/scripts/` — `inspect.sh`, `statusline.py` | stow | pushed (the symlink follows the main checkout) |
-| `opencode/.config/opencode/` — `juror.md`, `opencode.jsonc`, `plugins/` | stow | pushed; a **new** file needs `stow opencode` again |
+| `opencode/.config/opencode/` — `juror.md`, `opencode.jsonc`, `plugins/`, `skills/` (the two juror standards) | stow | pushed; a **new** file needs `stow opencode` again |
 
 **Testing an edit needs neither.** `claude --plugin-dir ./plugins/loop` from the worktree root
 loads the copy you are editing for that session only — no install, no copy, and no effect on
