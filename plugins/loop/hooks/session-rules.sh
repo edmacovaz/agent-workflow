@@ -20,9 +20,12 @@ root=${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)}
 rules="$root/rules/agent-workflow.md"
 [ -r "$rules" ] || { printf '{}\n'; exit 0; }
 
-python3 - "$rules" 2>/dev/null <<'PY' || printf '{}\n'
+# The root, not a parsed version: an installed copy's path ends in its SHA, and a --plugin-dir
+# session's names the worktree, whose basename alone would read as a version (LAB-97).
+python3 - "$rules" "$root" 2>/dev/null <<'PY' || printf '{}\n'
 import json, sys
-body = open(sys.argv[1], encoding="utf-8").read()
+body = f"The loop plugin in this session is loaded from `{sys.argv[2]}`.\n\n"
+body += open(sys.argv[1], encoding="utf-8").read()
 print(json.dumps({"hookSpecificOutput": {
     "hookEventName": "SessionStart",
     "additionalContext": body,

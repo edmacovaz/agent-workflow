@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Behaviour tests for jury.py.  Run: python3 tests/test_jury.py
+"""Behaviour tests for jury.py, statusline.py and session-rules.sh.  Run: python3 tests/test_jury.py
 
 By path, from the worktree root.  An installed plugin is a copy under `~/.claude/plugins/cache/`
 at a path that changes on every update, so testing the installed runner exercises the copy you
@@ -1954,6 +1954,21 @@ def test_the_display_never_fails_the_slot():
     assert done.returncode == 0, done
     assert done.stdout == "", done.stdout
     assert done.stderr == "", done.stderr
+
+
+def test_the_session_names_the_copy_it_loaded():
+    """An installed copy's path ends in its SHA, so naming the root answers "which loop is this
+    session running" with no tool call — and a --plugin-dir session names the worktree instead
+    of passing its basename off as a version (LAB-97)."""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "plugins", "loop")
+    done = subprocess.run(["bash", os.path.join(root, "hooks", "session-rules.sh")],
+                          env={**os.environ, "CLAUDE_PLUGIN_ROOT": root},
+                          text=True, capture_output=True)
+    assert done.returncode == 0, done
+    context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
+    first, _, rest = context.partition("\n\n")
+    assert first == f"The loop plugin in this session is loaded from `{root}`.", first
+    assert rest == open(os.path.join(root, "rules", "agent-workflow.md"), encoding="utf-8").read()
 
 
 def main():
