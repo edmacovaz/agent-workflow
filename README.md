@@ -77,13 +77,14 @@ from both routes, and each skill as both `/plan` and `/loop:plan`.
 
 An installed plugin is a **hard copy** fetched from GitHub, at a path that changes on every
 update, so it updates from what is pushed to `main`, not from your checkout. `plugin.json`
-carries no `version`, so the copy's version is the SHA of the last commit that touched
-`plugins/loop/` — a push that touches nothing there is not an update (LAB-105, LAB-97).
+carries no `version`, so per the Claude Code docs (Sep 2026) the copy's version is the SHA of
+the last commit that touched `plugins/loop/` — a push that touches nothing there is not an
+update (LAB-105, LAB-97).
 
 **Auto-update is on**, via `"autoUpdate": true` on the `agent-workflow` entry of
 `extraKnownMarketplaces` in `~/.claude/settings.json`, which `dotfiles` tracks. It is off by
 default for a marketplace like this one, and the `/plugin` toggle the docs describe did not appear
-in 2.1.283, so the setting is the way on (LAB-97). With it on, a session
+in 2.1.283, so the setting is the way on (LAB-97). With it on, per the docs, a session
 fetches `main` within ten minutes of its first message, and the new copy loads in the **next**
 session (or after `/reload-plugins`). The docs do not say whether it updates project-scope
 installs as well as user-scope ones; that is unconfirmed.
@@ -95,8 +96,8 @@ installs as well as user-scope ones; that is unconfirmed.
 | `claude --plugin-dir ./plugins/loop` | Nothing: it loads your worktree as it stands | The same line names the worktree path |
 | A cloud session | Not settled — see LAB-96 | Same line, once LAB-96 installs it |
 
-By hand — `--scope user` matters: without it, run inside a repo that enables the loop, the update
-picks that repo's project-scope copy and leaves the user copy behind:
+By hand — `--scope user` matters: per the docs, without it, run inside a repo that enables the
+loop, the update picks that repo's project-scope copy and leaves the user copy behind:
 
 ```bash
 claude plugin marketplace update agent-workflow && claude plugin update loop@agent-workflow --scope user
